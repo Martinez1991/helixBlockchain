@@ -2,7 +2,6 @@ import hashlib
 import time
 import binascii
 
-
 class Block:
     def __init__(self, index, previousHash, timestamp, data, hash, difficulty, nonce):
         self.index = index
@@ -90,9 +89,17 @@ class Blockchain:
         else:
             return  prevAdjustmentBlock.difficulty
 
-    def printBlockChain(self):
-        for i in range(0, len(self.__chain)):
-            print(self.__chain[i])
+    def bancoBlockChain(self, mycursor, mydb, lastreslt=[]):
+        for block in self.__chain:
+            if block not in lastreslt:
+                sql = "INSERT INTO Blockchain (ind, HashAnterior, Times, dados, hash, Dificuldade, Nonce) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                var = (
+                block.index, block.previousHash, block.timestamp, block.data, block.hash, block.difficulty, block.nonce)
+                mycursor.execute(sql, var)
+                mydb.commit()
+                lastreslt.append(block)
+
+
 
     def print_blocos(self):
         for bloco in self.__chain:

@@ -125,19 +125,26 @@ def Federa(ip, helix1Csub, helix1Ent, bc):
             atualizar(monitoraFederado, bc)
 
             proc = procuraId(helix1Ent, helix2Csub)
+            print(proc)
 
     return proc
 
 
 # função findFederado() procura os Ip dos outros Brokers Federados e valida se está nno primeiro broker
 def procuraId(ent, csub):
-    cursor2 = ent.distinct("entities.id")
+    cursor2 = ent.distinct("_id.id")
     lista = []
     for document in cursor2:
-        a = csub.find_one({"_id.id": document}, {"reference"})
-        for x in a:
-            srt = str(x)
-            srt = srt.split("/")[2]
-            srt = srt.split(":")[0]
-            lista.append(srt)
+        a = csub.find_one({"entities.id": document}, {"reference"})
+        aa = csub.distinct("entities.id")
+        if document in aa:
+            srt = str(a)
+            srt2 = srt.split("'http://")[1::]
+            srt2 = str(srt2)
+            srt3 = srt2.split(":1026/v2/op/notify")[0]
+            srt3 = str(srt3)
+            srt4 = srt3.replace('"',"")
+            srt5 = srt4.replace('[',"")
+            print(srt5)
+            lista.append(srt5)
     return lista

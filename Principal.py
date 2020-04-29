@@ -1,13 +1,14 @@
 from Block import *
 from Funcoes import *
 from Backup import *
+import os
 
 def main():
 
     genesis = Block(0, " ", ts, "Genesis block", calculateHash(0, "", ts, "Genesis block", 2, 0), 2, 0)
     bc = Blockchain(genesis)
-    helix = input("Digite o Ip do Helix: ")
-    # helix = os.system("wget -qO- ifconfig.co/ip")
+    #helix = input("Digite o Ip do Helix: ")
+    helix = os.system("wget -qO- ifconfig.co/ip")
     while True:
 
         helix1Ent = conectaEntidade(helix, 27017)

@@ -9,28 +9,33 @@ wait
 
 #Pré-requisitos:
 
-sudo apt-get install python3 -y
+sudo apt-get install python3
 wait
-sudo apt-get install python3-pip -y
+sudo apt-get install python3-pip
 wait
-sudo pip3 install pymongo -y
+sudo pip3 install pymongo
 wait
-sudo apt install mongodb -y
+sudo apt install mongodb
 wait
 
 #Habilitar o Backup:
 
-sudo apt-get install mysql-server –y
+sudo apt-get install mysql-server
 wait
-pip3 install mysql-connector-python -y
+pip3 install mysql-connector-python
 wait
 
-sudo systemctl start mysql -y
+sudo systemctl start mysql
 wait
 
 #Cria database
-sudo myslq -e grant all privileges on *.* to helix@localhost identified by 'pass' with grant option;
-sudo mysql -u helix –ppass -e “create database helix;”
+#sudo mysql -e “grant all privileges on *.* to helix@localhost identified by 'pass' with grant option;”
+#sudo mysql -u helix –ppass -e “create database helix;”
+
+SQL="create database helix; use mysql; grant all privileges on *.* to helix@localhost identified by 'pass' with grant option;"
+sudo mysql -u helix -ppass -e "$SQL"
+
+
 sleep 10
 
 #Instala e executa

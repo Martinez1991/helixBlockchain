@@ -13,12 +13,10 @@ def main():
     print (helix)
     while True:
 
-        helix1Ent = conectaEntidade(helix, 27017)
-        helix1Csub = conectaCsubs(helix, 27017)
-
-        helix2 = findFederado(helix1Csub)
-
+        helix1Ent = conectaEntidade(helix,27000)
         try:
+            helix1Csub = conectaCsubs(helix,27000)
+            helix2 = findFederado(helix1Csub)
             fed = Federa(helix2,helix1Csub, helix1Ent,bc)
             if fed != []:
             	for linha in fed:
@@ -28,35 +26,9 @@ def main():
         except Exception:
              pass # or you could use 'continue'..
 
-
-        ''' 
-        if helix2 != []:
-
-            for linha in helix2:
-
-                helix2Ent = conectaEntidade(linha, 27017)
-
-                dadosEntHelix2 = getDadosProximoHelix(helix2Ent)
-
-                dadosFederado = dadosFederados(helix1Csub, helix1Ent)
-
-                validaFederado = validaFederados(dadosFederado, dadosEntHelix2)
-
-                monitoraFederado = monitora(validaFederado)
-
-                atualizar(monitoraFederado, bc)
-
-                helix2Csub = conectaCsubs(helix, 27017)
-                helixx = findFederado(helix2Csub)
-
-        else:
-            pass
-        '''
-
         lista1 = monitora(gravaDB(helix1Ent))
 
         atualizar(lista1, bc)
-
 
         print("\n\n\n")
         print('-' * 60)
@@ -68,9 +40,6 @@ def main():
         bc.bancoBlockChain(mycursor, mydb)
 
         time.sleep(1)
-
-
-
 
 if __name__ == '__main__':
     main()

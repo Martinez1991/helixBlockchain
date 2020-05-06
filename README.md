@@ -45,7 +45,7 @@ Habilitar o Backup:
 
 Criar USUÁRIO e DATABASE no MongoDB:
 
-        sudo myslq -e "grant all privileges on *.* to helix@localhost identified by 'pass' with grant option;"
+        sudo mysql -e "grant all privileges on *.* to helix@localhost identified by 'pass' with grant option;"
         sudo mysql -u helix –ppass -e “create database helix;”
 
 

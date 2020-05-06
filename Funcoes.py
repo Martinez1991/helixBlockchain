@@ -7,7 +7,7 @@ import time
 
 # função conectaEntidade() conecta e trás  todos os dados do Orion e salva uma Lista
 def conectaEntidade(ip, porta):
-    client = MongoClient(ip, porta,username='helix', password='H3l1xNG')
+    client = MongoClient(ip, porta,username='helix', password='helix')
     mydb = client["orion"]
     mycol = mydb["entities"]
     return mycol
@@ -15,7 +15,7 @@ def conectaEntidade(ip, porta):
 
 # função conectaCsubs() conecta e trás  todos os dados do Orion e salva uma Lista
 def conectaCsubs(ip, porta):
-    client = MongoClient(ip, porta, username='helix', password='H3l1xNG')
+    client = MongoClient(ip, porta, username='helix', password='helix')
     mydb = client["orion"]
     mycol = mydb["csubs"]
     return mycol

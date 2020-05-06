@@ -7,7 +7,7 @@ import time
 
 # função conectaEntidade() conecta e trás  todos os dados do Orion e salva uma Lista
 def conectaEntidade(ip, porta):
-    client = MongoClient(ip, porta,username='helix', password='helix')
+    client = MongoClient(ip, porta,username='helix', password='H3l1xNG')
     mydb = client["orion"]
     mycol = mydb["entities"]
     return mycol
@@ -15,7 +15,7 @@ def conectaEntidade(ip, porta):
 
 # função conectaCsubs() conecta e trás  todos os dados do Orion e salva uma Lista
 def conectaCsubs(ip, porta):
-    client = MongoClient(ip, porta, username='helix', password='helix')
+    client = MongoClient(ip, porta, username='helix', password='H3l1xNG')
     mydb = client["orion"]
     mycol = mydb["csubs"]
     return mycol
@@ -110,9 +110,9 @@ def Federa(ip, helix1Csub, helix1Ent, bc):
 
         for linha in ip:
 
-            helix2Ent = conectaEntidade(linha, 27000, username='helix', password='helix')
+            helix2Ent = conectaEntidade(linha, 27000, username='helix', password='H3l1xNG')
 
-            helix2Csub = conectaCsubs(linha, 27000, username='helix', password='helix')
+            helix2Csub = conectaCsubs(linha, 27000, username='helix', password='H3l1xNG')
 
             dadosEntHelix2 = getDadosProximoHelix(helix2Ent)
 

@@ -7,7 +7,7 @@ import time
 
 # função conectaEntidade() conecta e trás  todos os dados do Orion e salva uma Lista
 def conectaEntidade(ip, porta):
-    client = MongoClient(ip, porta,username='helix', password='H3l1xNG')
+    client = MongoClient(ip, porta, username='helix', password='H3l1xNG')
     mydb = client["orion"]
     mycol = mydb["entities"]
     return mycol
@@ -45,6 +45,7 @@ def monitora(dados, lastreslt=[]):
 # função trans1() trás o Id e o valor do divice "csubs" do MongoDB, cujo os dados são dos IoTs FEDERADOS.
 def dadosFederados(csubs,entities):
     cursor2 = csubs.distinct("entities.id")
+    print (cursor2)
     lista = []
     for document in cursor2:
         a = entities.find_one({"_id.id": document}, {"attrs.temperature.value"})
@@ -105,14 +106,18 @@ def findFederado(csubs):
 
 
 def Federa(ip, helix1Csub, helix1Ent, bc):
-
+    porta = 27000
     if ip != []:
 
         for linha in ip:
 
-            helix2Ent = conectaEntidade(linha, 27000, username='helix', password='H3l1xNG')
+            helix2Ent = MongoClient(linha, porta, username='helix', password='H3l1xNG')
+            helix2Ent = helix2Ent["orion"]
+            helix2Ent = helix2Ent["entities"]
 
-            helix2Csub = conectaCsubs(linha, 27000, username='helix', password='H3l1xNG')
+            helix2Csub = MongoClient(linha, porta, username='helix', password='H3l1xNG')
+            helix2Csub = helix2Csub["orion"]
+            helix2Csub = helix2Csub["entities"]
 
             dadosEntHelix2 = getDadosProximoHelix(helix2Ent)
 

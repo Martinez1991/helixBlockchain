@@ -14,12 +14,14 @@ def main():
     while True:
 
         helix1Ent = conectaEntidade(helix,27000)
+        helix1Csub = conectaCsubs(helix,27000)
+        helix2 = findFederado(helix1Csub)
+
         try:
-            helix1Csub = conectaCsubs(helix,27000)
-            helix2 = findFederado(helix1Csub)
             fed = Federa(helix2,helix1Csub, helix1Ent,bc)
             if fed != []:
-            	for linha in fed:
+                print ("AQUI")
+                for linha in fed:
                     print(linha)
                     Federa(linha, helix1Csub, helix1Ent, bc)
 

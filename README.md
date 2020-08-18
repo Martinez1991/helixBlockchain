@@ -9,6 +9,7 @@ Após sua instalação e execução ela será capaz de verificar se houve alguma
 ## Requisitos e Instalação
 
    <a href="requirements.md">Requisitos</a>
-   <a href="installation.md">Requisitos</a>
+   
+   <a href="installation.md">Instalação</a>
 
 

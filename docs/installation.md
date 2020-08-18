@@ -4,7 +4,7 @@
 Vale ressaltar que para que o modo automático funcione corretamente o login e senha pré-configurados do MongoDB do broker devem permanecer como "helix" para o usuário e  "H3l1xNG" para a senha. Caso tal configuração seja alterada, deve-se alterar no código da blockchain também.
 
 ## Modo automático:
-Modo automatizado para baixar e executar a BlockChain:
+Modo automatizado para baixar e executar a Blockchain:
 
         sudo git clone https://github.com/Martinez1991/helixBlockchain.git
         cd helixBlockchain

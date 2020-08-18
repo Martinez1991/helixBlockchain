@@ -16,4 +16,5 @@ Após sua instalação e execução ela será capaz de verificar se houve alguma
    
    <a href="docs/installation.md">Instalação</a>
 
-
+## Conheça o Helix Sandbox
+<a href="https://gethelix.org">Helix</a> for a better world! 

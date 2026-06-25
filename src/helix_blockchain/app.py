@@ -95,8 +95,14 @@ async def run(settings: Settings) -> None:
         log_level=settings.log_level.lower(),
     )
     server = uvicorn.Server(config)
+    # Round-change fires if a height stalls for ~3x the block interval.
+    round_timeout = max(2.0, settings.consensus.block_interval * 3)
     try:
-        await asyncio.gather(server.serve(), monitor_loop(node, settings))
+        await asyncio.gather(
+            server.serve(),
+            monitor_loop(node, settings),
+            node.round_timer_loop(round_timeout),
+        )
     finally:
         await transport.aclose()
 

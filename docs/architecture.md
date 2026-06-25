@@ -50,6 +50,24 @@ A regra de dependência aponta para baixo. `domain/` não tem I/O e é 100% test
 - Os commit seals coletados viram o **certificado de finalidade** persistido no
   bloco — verificável de forma independente por `verify_finality()`.
 
+### Round change (liveness sob proposer faltante)
+
+Se uma altura não fecha a tempo, cada nó chama `on_timeout()` e transmite uma
+mensagem **ROUND_CHANGE** para a próxima rodada, escolhendo um novo proposer por
+rodízio. Dois limiares governam a transição:
+
+- **f+1 ROUND_CHANGE** para uma rodada maior → o nó "acelera" enviando o seu
+  próprio (garante que nós atrasados avancem).
+- **quórum ROUND_CHANGE** → o nó adota a nova rodada; seu proposer assume.
+
+**Segurança preservada por certificados.** Cada ROUND_CHANGE carrega um
+*prepared certificate* — um quórum de mensagens PREPARE provando qual valor o
+remetente travou (se travou). O novo proposer **re-propõe o valor travado de
+maior rodada** entre o quórum de ROUND_CHANGE (ou um bloco novo, se nada estava
+travado), e anexa esse *round-change certificate* ao PRE_PREPARE para que todos
+verifiquem. Sem o prepared certificate, um nó bizantino poderia mentir sobre um
+valor travado e sequestrar a próxima proposta — por isso a prova é obrigatória.
+
 ### Por que BFT em vez de PoW (como na v1)?
 
 Num cenário permissionado de IoT, Proof-of-Work só desperdiça CPU sem agregar
@@ -74,11 +92,6 @@ valor autoritativo do broker principal:
 
 ## Limitações conhecidas / trabalho futuro
 
-- **Round-change não implementado.** O caminho feliz (segurança por certificado)
-  está completo e testado. Se o *próximo proposer* estiver offline, o cluster
-  não troca de rodada automaticamente e a altura corrente trava até ele voltar.
-  Implementar o protocolo de ROUND_CHANGE (mensagem já modelada) é o próximo
-  passo para liveness sob proposer faltante.
 - **Mempool simples.** Registros pendentes são propostos pelo proposer da
   rodada; não há reconciliação de mempool entre nós (cada nó propõe o que
   coletou). Suficiente para o cenário, mas pode duplicar observações entre nós.

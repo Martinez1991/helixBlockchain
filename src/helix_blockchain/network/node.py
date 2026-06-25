@@ -1,9 +1,10 @@
 """The consensus-driving node: glue between engine, storage and transport.
 
-A :class:`Node` runs one BFT height at a time. It buffers incoming integrity
-records, proposes a block when it is the round proposer, processes peer messages
-through the :class:`ConsensusEngine`, persists finalized blocks, and advances to
-the next height. It is transport-agnostic (see :mod:`.transport`) so it can be
+A :class:`Node` runs one BFT height at a time. It keeps a set of pending
+integrity records, feeds them to the :class:`ConsensusEngine` (which proposes
+when this node is the round proposer), processes peer messages, persists
+finalized blocks, advances to the next height, and drives the round-change timer
+for liveness. It is transport-agnostic (see :mod:`.transport`) so it can be
 tested in-process and deployed over HTTP unchanged.
 """
 
@@ -63,30 +64,41 @@ class Node:
     def _new_engine(self) -> ConsensusEngine:
         latest = self.repo.latest()
         assert latest is not None
-        return ConsensusEngine(
+        engine = ConsensusEngine(
             validators=self.validators,
             private_key=self.private_key,
             height=latest.index + 1,
             previous_hash=latest.hash,
             now_ms=self.now_ms,
         )
+        return engine
 
     @property
     def height(self) -> int:
         """Current chain tip index."""
         return self.repo.height()
 
+    @property
+    def round(self) -> int:
+        """Current consensus round at the working height."""
+        return self._engine.round
+
     # ── public API ─────────────────────────────────────────────────────
     async def submit_records(self, records: list[IntegrityRecord]) -> None:
         """Queue integrity records for inclusion and propose if it's our turn."""
         async with self._lock:
             self._pending.extend(records)
-            await self._maybe_propose_locked()
+            await self._apply_locked(self._engine.set_pending(self._pending))
 
     async def tick(self) -> None:
-        """Drive a proposal if records are pending and we are the proposer."""
+        """Re-evaluate whether to propose with the current pending records."""
         async with self._lock:
-            await self._maybe_propose_locked()
+            await self._apply_locked(self._engine.set_pending(self._pending))
+
+    async def force_timeout(self) -> None:
+        """Trigger a round change for the current height (test/operator hook)."""
+        async with self._lock:
+            await self._apply_locked(self._engine.on_timeout())
 
     async def on_message(self, message: ConsensusMessage) -> None:
         """Handle an inbound consensus message from a peer."""
@@ -95,36 +107,49 @@ class Node:
                 await self._sync_locked(up_to=message.height - 1)
             if message.height != self._engine.height:
                 return  # stale or still-future after sync; ignore
-            result = self._engine.handle(message)
-            await self._apply_locked(result)
+            await self._apply_locked(self._engine.handle(message))
+
+    async def round_timer_loop(self, timeout_s: float) -> None:
+        """Background task: round-change if the height stalls for ``timeout_s``."""
+        while True:
+            start_height = self.height
+            await asyncio.sleep(timeout_s)
+            async with self._lock:
+                stalled = self.height == start_height
+                waiting = (
+                    bool(self._pending)
+                    or self._engine.round > 0
+                    or self._engine.proposal is not None
+                )
+                if stalled and waiting and not self._engine.committed:
+                    log.info(
+                        "node=%s round timeout at height=%s round=%s",
+                        self.node_id, self._engine.height, self._engine.round,
+                    )
+                    await self._apply_locked(self._engine.on_timeout())
 
     # ── internal (lock held) ───────────────────────────────────────────
-    async def _maybe_propose_locked(self) -> None:
-        if not self._pending:
-            return
-        if not self._engine.is_proposer() or self._engine.phase != 0:
-            return
-        batch, self._pending = self._pending, []
-        log.info("node=%s proposing block height=%s txs=%d",
-                 self.node_id, self._engine.height, len(batch))
-        result = self._engine.propose(batch)
-        await self._apply_locked(result)
-
     async def _apply_locked(self, result: StepResult) -> None:
-        for msg in result.broadcast:
-            await self.transport.broadcast(msg)
-        if result.committed is not None:
+        while True:
+            for msg in result.broadcast:
+                await self.transport.broadcast(msg)
+            if result.committed is None:
+                return
             self._commit_locked(result.committed)
-            await self._maybe_propose_locked()
+            # A fresh engine may immediately propose the next height's records.
+            result = self._engine.set_pending(self._pending)
 
     def _commit_locked(self, block: Block) -> None:
         if not verify_finality(block, self.validators):
             log.warning("node=%s refusing block %s: invalid finality cert",
                         self.node_id, block.index)
+            self._engine = self._new_engine()
             return
         self.repo.append(block)
-        log.info("node=%s committed block height=%s hash=%s",
-                 self.node_id, block.index, block.hash[:12])
+        committed_ids = {r.id for r in block.records}
+        self._pending = [r for r in self._pending if r.id not in committed_ids]
+        log.info("node=%s committed block height=%s round=%s hash=%s",
+                 self.node_id, block.index, self._engine.round, block.hash[:12])
         if self.on_commit is not None:
             self.on_commit(block)
         self._engine = self._new_engine()
@@ -145,5 +170,7 @@ class Node:
                             self.node_id, want)
                 break
             self.repo.append(block)
+            committed_ids = {r.id for r in block.records}
+            self._pending = [r for r in self._pending if r.id not in committed_ids]
             self._engine = self._new_engine()
             log.info("node=%s synced block height=%s", self.node_id, want)

@@ -55,6 +55,11 @@ class Node:
 
         self._pending: list[IntegrityRecord] = []
         self._lock = asyncio.Lock()
+        # Inbound consensus messages are queued and processed by a single worker
+        # so the HTTP handler returns immediately. This is what prevents a
+        # re-entrant deadlock: a node broadcasting under its lock would otherwise
+        # block on a peer that synchronously broadcasts back to it.
+        self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue()
 
         if self.repo.height() < 0:
             self.repo.append(genesis_block())
@@ -99,6 +104,21 @@ class Node:
         """Trigger a round change for the current height (test/operator hook)."""
         async with self._lock:
             await self._apply_locked(self._engine.on_timeout())
+
+    def enqueue_inbound(self, message: ConsensusMessage) -> None:
+        """Queue a peer message for the worker (called from the HTTP handler)."""
+        self._inbox.put_nowait(message)
+
+    async def inbound_worker(self) -> None:
+        """Process queued inbound messages serially, off the HTTP request path."""
+        while True:
+            message = await self._inbox.get()
+            try:
+                await self.on_message(message)
+            except Exception:  # noqa: BLE001 — never let one bad message kill the worker
+                log.exception("node=%s failed to process inbound message", self.node_id)
+            finally:
+                self._inbox.task_done()
 
     async def on_message(self, message: ConsensusMessage) -> None:
         """Handle an inbound consensus message from a peer."""

@@ -37,6 +37,7 @@ services:
       HELIX_CONSENSUS__PEERS: >-
         node-2@node-2:8000|8026ef9ae2f276cf645e77bb0e5b7cb380b62dafb9b6b4d2e406c4259be49412,node-3@node-3:8000|c94e4751b4ffbcef0e76a97cb443ecbd4db2d33d5444b76d6f02027d00c5d2dc
       HELIX_STORAGE__URL: sqlite:////app/data/chain.db
+      HELIX_DEBUG_API: "true"   # demo only: enables /admin/submit
     ports:
       - "8001:8000"
     networks: [helix]
@@ -53,6 +54,7 @@ services:
       HELIX_CONSENSUS__PEERS: >-
         node-1@node-1:8000|740d84745c42bd4fab91eb83c69f70c28653fe64bcd948332ca1abb6764d0bc8,node-3@node-3:8000|c94e4751b4ffbcef0e76a97cb443ecbd4db2d33d5444b76d6f02027d00c5d2dc
       HELIX_STORAGE__URL: sqlite:////app/data/chain.db
+      HELIX_DEBUG_API: "true"   # demo only: enables /admin/submit
     ports:
       - "8002:8000"
     networks: [helix]
@@ -69,6 +71,7 @@ services:
       HELIX_CONSENSUS__PEERS: >-
         node-1@node-1:8000|740d84745c42bd4fab91eb83c69f70c28653fe64bcd948332ca1abb6764d0bc8,node-2@node-2:8000|8026ef9ae2f276cf645e77bb0e5b7cb380b62dafb9b6b4d2e406c4259be49412
       HELIX_STORAGE__URL: sqlite:////app/data/chain.db
+      HELIX_DEBUG_API: "true"   # demo only: enables /admin/submit
     ports:
       - "8003:8000"
     networks: [helix]

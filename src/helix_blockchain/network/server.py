@@ -6,6 +6,8 @@ Endpoints:
 * ``GET  /blocks/{index}`` — serve a finalized block (used for catch-up sync).
 * ``GET  /chain`` — chain height + latest hash.
 * ``GET  /health`` — liveness probe.
+* ``POST /admin/submit`` — (debug only) inject synthetic integrity records to
+  drive a consensus round without a live FIWARE federation.
 """
 
 from __future__ import annotations
@@ -15,10 +17,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 
 from helix_blockchain.consensus.messages import ConsensusMessage
+from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
 
 
-def create_app(node: Node) -> FastAPI:
+def create_app(node: Node, *, debug_api: bool = False) -> FastAPI:
     app = FastAPI(title="Helix Blockchain Node", version="0.2.0")
 
     @app.post("/consensus")
@@ -29,7 +32,9 @@ def create_app(node: Node) -> FastAPI:
             raise HTTPException(
                 status_code=400, detail=f"malformed message: {exc}"
             ) from exc
-        await node.on_message(message)
+        # Queue and return immediately so the sender's broadcast never blocks on
+        # our processing (avoids re-entrant consensus deadlock).
+        node.enqueue_inbound(message)
         return {"status": "accepted"}
 
     @app.get("/blocks/{index}")
@@ -53,5 +58,25 @@ def create_app(node: Node) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    if debug_api:
+
+        @app.post("/admin/submit")
+        async def admin_submit(count: int = 1) -> dict[str, Any]:
+            """Inject ``count`` synthetic integrity records (testing hook)."""
+            ts = node.now_ms()
+            records = [
+                IntegrityRecord(
+                    entity_id=f"Demo:{ts}:{i}",
+                    attribute="temperature",
+                    value_hash=IntegrityRecord.hash_value(20 + i),
+                    source_broker="demo",
+                    verdict=Verdict.OK,
+                    observed_at=ts,
+                )
+                for i in range(count)
+            ]
+            await node.submit_records(records)
+            return {"submitted": count, "height": node.height}
 
     return app

@@ -33,14 +33,13 @@ class MongoOrionGateway:
     # ── connection management ──────────────────────────────────────────
     def _client_for(self, host: str) -> MongoClient:
         if host not in self._clients:
-            self._clients[host] = MongoClient(
-                host,
-                self._settings.port,
-                username=self._settings.username,
-                password=self._settings.password,
-                tls=self._settings.tls,
-                serverSelectionTimeoutMS=3000,
-            )
+            kwargs: dict = {"tls": self._settings.tls, "serverSelectionTimeoutMS": 3000}
+            # Only authenticate when credentials are configured; the demo Mongo
+            # runs without auth, and passing empty credentials would fail SCRAM.
+            if self._settings.password:
+                kwargs["username"] = self._settings.username
+                kwargs["password"] = self._settings.password
+            self._clients[host] = MongoClient(host, self._settings.port, **kwargs)
         return self._clients[host]
 
     def _entities_collection(self, host: str):

@@ -7,6 +7,8 @@ over an in-process bus (:class:`InMemoryTransport`) in tests.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -104,12 +106,14 @@ class HttpTransport:
 
     async def broadcast(self, message: ConsensusMessage) -> None:
         payload = message.to_dict()
-        for peer in self._peers:
-            try:
+
+        async def _post(peer):
+            # Best-effort: BFT tolerates unreachable peers up to f.
+            with contextlib.suppress(httpx.HTTPError):
                 await self._client.post(f"{peer.base_url}/consensus", json=payload)
-            except httpx.HTTPError:
-                # Best-effort: BFT tolerates unreachable peers up to f.
-                continue
+
+        # Concurrent so one slow/down peer doesn't delay delivery to the others.
+        await asyncio.gather(*(_post(p) for p in self._peers))
 
     async def fetch_block(self, index: int) -> Block | None:
         for peer in self._peers:

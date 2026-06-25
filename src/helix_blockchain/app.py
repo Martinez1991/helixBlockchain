@@ -87,7 +87,7 @@ async def monitor_loop(node: Node, settings: Settings) -> None:
 
 async def run(settings: Settings) -> None:
     node, transport = build_node(settings)
-    api = create_app(node)
+    api = create_app(node, debug_api=settings.debug_api)
     config = uvicorn.Config(
         api,
         host=settings.consensus.bind_host,
@@ -100,6 +100,7 @@ async def run(settings: Settings) -> None:
     try:
         await asyncio.gather(
             server.serve(),
+            node.inbound_worker(),
             monitor_loop(node, settings),
             node.round_timer_loop(round_timeout),
         )

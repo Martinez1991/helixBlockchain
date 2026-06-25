@@ -7,9 +7,10 @@ sections, e.g. ``HELIX_ORION__HOST``. See ``.env.example`` for the full list.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from helix_blockchain.domain.crypto import PublicKey
 
@@ -62,7 +63,9 @@ class OrionSettings(BaseSettings):
 
 
 class ConsensusSettings(BaseSettings):
-    peers: list[Peer] = Field(default_factory=list)
+    # NoDecode stops pydantic-settings from JSON-decoding the env value, so the
+    # validator below receives the raw "id@host:port|pubkey,..." string.
+    peers: Annotated[list[Peer], NoDecode] = Field(default_factory=list)
     bind_host: str = "0.0.0.0"
     bind_port: int = 8000
     block_interval: float = 5.0
@@ -92,6 +95,8 @@ class Settings(BaseSettings):
     consensus: ConsensusSettings = Field(default_factory=ConsensusSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     log_level: str = "INFO"
+    # Enables the unauthenticated /admin/submit test hook. Demo/testing only.
+    debug_api: bool = False
 
 
 def load_settings() -> Settings:

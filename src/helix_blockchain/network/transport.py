@@ -3,6 +3,14 @@
 The :class:`Node` depends only on the :class:`Transport` protocol, so the same
 consensus logic runs over real HTTP (:class:`HttpTransport`) in production or
 over an in-process bus (:class:`InMemoryTransport`) in tests.
+
+Three peer interactions are modelled:
+
+* ``broadcast`` — fan out a signed consensus message (PRE-PREPARE/PREPARE/…).
+* ``gossip_records`` — share newly observed integrity records so any node's
+  observations reach whichever node is the next proposer (mempool reconciliation).
+* ``gossip_block`` — proactively push a finalized block so peers that missed the
+  consensus rounds catch up immediately (complements pull-based ``fetch_block``).
 """
 
 from __future__ import annotations
@@ -10,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -26,37 +34,56 @@ class Transport(Protocol):
     async def fetch_block(self, index: int) -> Block | None:
         """Fetch a finalized block by index from any peer, for catch-up sync."""
 
+    async def gossip_records(self, records: list[dict[str, Any]]) -> None:
+        """Share newly observed integrity records with every peer."""
+
+    async def gossip_block(self, block: dict[str, Any]) -> None:
+        """Push a finalized block to every peer."""
+
 
 _MessageHandler = Callable[[ConsensusMessage], Awaitable[None]]
 _BlockGetter = Callable[[int], Awaitable[Block | None]]
+_RecordsHandler = Callable[[list[dict[str, Any]]], Awaitable[None]]
+_BlockHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class InMemoryNetwork:
-    """An in-process message bus connecting several nodes for tests.
+    """An in-process bus connecting several nodes for tests.
 
-    Broadcasts are *enqueued* rather than delivered synchronously, mirroring the
+    Payloads are *enqueued* rather than delivered synchronously, mirroring the
     fire-and-forget semantics of real HTTP transport. This avoids re-entrant
-    lock acquisition (a node broadcasting while holding its own lock would
-    otherwise deadlock when a peer replies synchronously). Drain delivery with
-    :meth:`run_until_idle`.
+    lock acquisition (a node sending while holding its own lock would otherwise
+    deadlock when a peer replies synchronously). Drain with :meth:`run_until_idle`.
     """
 
     def __init__(self) -> None:
         self._handlers: dict[str, _MessageHandler] = {}
         self._getters: dict[str, _BlockGetter] = {}
+        self._record_handlers: dict[str, _RecordsHandler] = {}
+        self._block_handlers: dict[str, _BlockHandler] = {}
         self.partitioned: set[str] = set()
-        self._queue: list[tuple[str, ConsensusMessage]] = []
+        # Each item is (kind, sender_id, payload).
+        self._queue: list[tuple[str, str, Any]] = []
 
     def register(
-        self, node_id: str, on_message: _MessageHandler, get_block: _BlockGetter
+        self,
+        node_id: str,
+        on_message: _MessageHandler,
+        get_block: _BlockGetter,
+        on_records: _RecordsHandler | None = None,
+        on_block: _BlockHandler | None = None,
     ) -> InMemoryTransport:
         self._handlers[node_id] = on_message
         self._getters[node_id] = get_block
+        if on_records is not None:
+            self._record_handlers[node_id] = on_records
+        if on_block is not None:
+            self._block_handlers[node_id] = on_block
         return InMemoryTransport(self, node_id)
 
-    def _enqueue(self, sender_id: str, message: ConsensusMessage) -> None:
+    def _enqueue(self, kind: str, sender_id: str, payload: Any) -> None:
         if sender_id not in self.partitioned:
-            self._queue.append((sender_id, message))
+            self._queue.append((kind, sender_id, payload))
 
     async def _fetch(self, requester_id: str, index: int) -> Block | None:
         if requester_id in self.partitioned:
@@ -70,17 +97,22 @@ class InMemoryNetwork:
         return None
 
     async def run_until_idle(self, max_steps: int = 10_000) -> None:
-        """Deliver queued messages (and any they trigger) until quiescent."""
+        """Deliver everything queued (and anything it triggers) until quiescent."""
         steps = 0
+        handlers_by_kind = {
+            "msg": self._handlers,
+            "records": self._record_handlers,
+            "block": self._block_handlers,
+        }
         while self._queue:
             steps += 1
             if steps > max_steps:
                 raise RuntimeError("network did not reach quiescence")
-            sender_id, message = self._queue.pop(0)
-            for node_id, handler in list(self._handlers.items()):
+            kind, sender_id, payload = self._queue.pop(0)
+            for node_id, handler in list(handlers_by_kind[kind].items()):
                 if node_id == sender_id or node_id in self.partitioned:
                     continue
-                await handler(message)
+                await handler(payload)
 
 
 class InMemoryTransport:
@@ -91,10 +123,16 @@ class InMemoryTransport:
         self.self_id = self_id
 
     async def broadcast(self, message: ConsensusMessage) -> None:
-        self._network._enqueue(self.self_id, message)
+        self._network._enqueue("msg", self.self_id, message)
 
     async def fetch_block(self, index: int) -> Block | None:
         return await self._network._fetch(self.self_id, index)
+
+    async def gossip_records(self, records: list[dict[str, Any]]) -> None:
+        self._network._enqueue("records", self.self_id, records)
+
+    async def gossip_block(self, block: dict[str, Any]) -> None:
+        self._network._enqueue("block", self.self_id, block)
 
 
 class HttpTransport:
@@ -104,16 +142,23 @@ class HttpTransport:
         self._peers = peers
         self._client = httpx.AsyncClient(timeout=timeout)
 
-    async def broadcast(self, message: ConsensusMessage) -> None:
-        payload = message.to_dict()
-
+    async def _post_all(self, path: str, payload: Any) -> None:
         async def _post(peer):
             # Best-effort: BFT tolerates unreachable peers up to f.
             with contextlib.suppress(httpx.HTTPError):
-                await self._client.post(f"{peer.base_url}/consensus", json=payload)
+                await self._client.post(f"{peer.base_url}{path}", json=payload)
 
         # Concurrent so one slow/down peer doesn't delay delivery to the others.
         await asyncio.gather(*(_post(p) for p in self._peers))
+
+    async def broadcast(self, message: ConsensusMessage) -> None:
+        await self._post_all("/consensus", message.to_dict())
+
+    async def gossip_records(self, records: list[dict[str, Any]]) -> None:
+        await self._post_all("/mempool", {"records": records})
+
+    async def gossip_block(self, block: dict[str, Any]) -> None:
+        await self._post_all("/block", block)
 
     async def fetch_block(self, index: int) -> Block | None:
         for peer in self._peers:

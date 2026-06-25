@@ -3,6 +3,8 @@
 Endpoints:
 
 * ``POST /consensus`` — receive a consensus message from a peer.
+* ``POST /mempool`` — receive integrity records gossiped by a peer.
+* ``POST /block`` — receive a finalized block pushed by a peer.
 * ``GET  /blocks/{index}`` — serve a finalized block (used for catch-up sync).
 * ``GET  /chain`` — chain height + latest hash.
 * ``GET  /health`` — liveness probe.
@@ -17,6 +19,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 
 from helix_blockchain.consensus.messages import ConsensusMessage
+from helix_blockchain.domain.block import Block
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
 
@@ -35,6 +38,28 @@ def create_app(node: Node, *, debug_api: bool = False) -> FastAPI:
         # Queue and return immediately so the sender's broadcast never blocks on
         # our processing (avoids re-entrant consensus deadlock).
         node.enqueue_inbound(message)
+        return {"status": "accepted"}
+
+    @app.post("/mempool")
+    async def mempool(payload: dict[str, Any]) -> dict[str, str]:
+        try:
+            records = [IntegrityRecord.from_dict(r) for r in payload["records"]]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"malformed records: {exc}"
+            ) from exc
+        await node.receive_records(records)
+        return {"status": "accepted"}
+
+    @app.post("/block")
+    async def push_block(payload: dict[str, Any]) -> dict[str, str]:
+        try:
+            block = Block.from_dict(payload)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"malformed block: {exc}"
+            ) from exc
+        await node.ingest_block(block)
         return {"status": "accepted"}
 
     @app.get("/blocks/{index}")

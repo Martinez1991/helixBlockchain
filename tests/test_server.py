@@ -19,6 +19,12 @@ class NullTransport:
     async def fetch_block(self, index):
         return None
 
+    async def gossip_records(self, records):
+        return None
+
+    async def gossip_block(self, block):
+        return None
+
 
 def build_single_node() -> Node:
     key = PrivateKey.generate()

@@ -54,6 +54,9 @@ class Node:
         self.on_commit = on_commit
 
         self._pending: list[IntegrityRecord] = []
+        # Every record id ever seen (pending or committed): the mempool filter
+        # that stops gossiped records from looping or being recorded twice.
+        self._mempool_seen: set[str] = set()
         self._lock = asyncio.Lock()
         # Inbound consensus messages are queued and processed by a single worker
         # so the HTTP handler returns immediately. This is what prevents a
@@ -90,10 +93,30 @@ class Node:
 
     # ── public API ─────────────────────────────────────────────────────
     async def submit_records(self, records: list[IntegrityRecord]) -> None:
-        """Queue integrity records for inclusion and propose if it's our turn."""
+        """Add locally observed records, gossip them to peers, and maybe propose."""
+        await self._ingest_records(records, gossip=True)
+
+    async def receive_records(self, records: list[IntegrityRecord]) -> None:
+        """Add records gossiped by a peer (no re-gossip in a full-mesh network)."""
+        await self._ingest_records(records, gossip=False)
+
+    async def _ingest_records(
+        self, records: list[IntegrityRecord], *, gossip: bool
+    ) -> None:
         async with self._lock:
-            self._pending.extend(records)
+            fresh = [r for r in records if r.id not in self._mempool_seen]
+            if not fresh:
+                return
+            self._mempool_seen.update(r.id for r in fresh)
+            self._pending.extend(fresh)
+            if gossip:
+                await self.transport.gossip_records([r.to_dict() for r in fresh])
             await self._apply_locked(self._engine.set_pending(self._pending))
+
+    async def ingest_block(self, block: Block) -> None:
+        """Apply a finalized block pushed by a peer (proactive gossip)."""
+        async with self._lock:
+            await self._apply_pushed_block_locked(block)
 
     async def tick(self) -> None:
         """Re-evaluate whether to propose with the current pending records."""
@@ -155,24 +178,50 @@ class Node:
                 await self.transport.broadcast(msg)
             if result.committed is None:
                 return
-            self._commit_locked(result.committed)
+            appended = self._commit_locked(result.committed)
+            if appended is not None:
+                await self.transport.gossip_block(appended.to_dict())
             # A fresh engine may immediately propose the next height's records.
             result = self._engine.set_pending(self._pending)
 
-    def _commit_locked(self, block: Block) -> None:
+    def _commit_locked(self, block: Block) -> Block | None:
         if not verify_finality(block, self.validators):
             log.warning("node=%s refusing block %s: invalid finality cert",
                         self.node_id, block.index)
             self._engine = self._new_engine()
-            return
+            return None
         self.repo.append(block)
-        committed_ids = {r.id for r in block.records}
-        self._pending = [r for r in self._pending if r.id not in committed_ids]
+        self._forget_committed(block)
         log.info("node=%s committed block height=%s round=%s hash=%s",
                  self.node_id, block.index, self._engine.round, block.hash[:12])
         if self.on_commit is not None:
             self.on_commit(block)
         self._engine = self._new_engine()
+        return block
+
+    def _forget_committed(self, block: Block) -> None:
+        """Drop a committed block's records from the mempool (incl. ones we never
+        held locally), so they are never re-proposed or re-gossiped."""
+        committed_ids = {r.id for r in block.records}
+        self._pending = [r for r in self._pending if r.id not in committed_ids]
+        self._mempool_seen.update(committed_ids)
+
+    async def _apply_pushed_block_locked(self, block: Block) -> None:
+        if block.index != self.repo.height() + 1:
+            return  # gap or stale; on-demand pull-sync handles larger gaps
+        if block.header.previous_hash != self.repo.latest().hash:  # type: ignore[union-attr]
+            return
+        if not verify_finality(block, self.validators):
+            log.warning("node=%s rejecting pushed block %s: invalid finality",
+                        self.node_id, block.index)
+            return
+        self.repo.append(block)
+        self._forget_committed(block)
+        log.info("node=%s applied pushed block height=%s", self.node_id, block.index)
+        if self.on_commit is not None:
+            self.on_commit(block)
+        self._engine = self._new_engine()
+        await self._apply_locked(self._engine.set_pending(self._pending))
 
     async def _sync_locked(self, up_to: int) -> None:
         """Fetch and apply missing finalized blocks from peers up to ``up_to``."""
@@ -190,7 +239,6 @@ class Node:
                             self.node_id, want)
                 break
             self.repo.append(block)
-            committed_ids = {r.id for r in block.records}
-            self._pending = [r for r in self._pending if r.id not in committed_ids]
+            self._forget_committed(block)
             self._engine = self._new_engine()
             log.info("node=%s synced block height=%s", self.node_id, want)

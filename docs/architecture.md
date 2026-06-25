@@ -90,12 +90,25 @@ valor autoritativo do broker principal:
 `RecordDeduper` evita registrar repetidamente observações idênticas (equivale ao
 `monitora()` legado).
 
+### Mempool e gossip
+
+- **Reconciliação de mempool (gossip de registros).** Cada nó coleta do seu
+  próprio Orion. Ao observar registros novos, ele os compartilha com os peers
+  (`POST /mempool`). Assim, uma adulteração detectada por um nó que **não** é o
+  proposer da rodada ainda chega a quem vai propor, e entra na cadeia. Um
+  conjunto `mempool_seen` (por id de registro) impede laços de gossip e
+  re-inclusão de registros já commitados.
+- **Gossip proativo de blocos.** Ao finalizar um bloco, o nó o **empurra** aos
+  peers (`POST /block`), além do pull sob demanda (`fetch_block`). Um nó que
+  perdeu as rodadas de consenso recebe o bloco imediatamente; lacunas maiores
+  ainda são preenchidas pelo pull-sync.
+
 ## Limitações conhecidas / trabalho futuro
 
-- **Mempool simples.** Registros pendentes são propostos pelo proposer da
-  rodada; não há reconciliação de mempool entre nós (cada nó propõe o que
-  coletou). Suficiente para o cenário, mas pode duplicar observações entre nós.
-- **Sincronização de blocos** é sob demanda (ao ver mensagem de altura futura);
-  não há gossip proativo de blocos.
 - **TLS** entre validadores e com o MongoDB deve ser habilitado em produção
   (config `HELIX_ORION__TLS`; HTTPS via proxy reverso para o P2P).
+- **Autenticação dos endpoints de gossip.** `/mempool` e `/block` aceitam
+  payloads de qualquer origem alcançável; em produção, restrinja a rede dos
+  validadores e/ou exija mTLS. Mensagens de consenso já são assinadas por nó.
+- **Conjunto de validadores estático.** Adição/remoção de validadores exige
+  reconfiguração e reinício; não há mudança dinâmica de membership on-chain.

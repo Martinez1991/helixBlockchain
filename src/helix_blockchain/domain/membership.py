@@ -56,11 +56,30 @@ def apply_changes(
     the last validator is rejected (the set must never be empty).
     """
     keys = {v.to_hex(): v for v in validators}
+    _apply(keys, changes)
+    if not keys:
+        raise ValueError("a validator change must not empty the validator set")
+    return ValidatorSet(list(keys.values()))
+
+
+def derive_validator_set(changes: list[ValidatorChange]) -> ValidatorSet:
+    """Build the active :class:`ValidatorSet` from scratch by replaying every
+    change in order, starting from the empty set.
+
+    This is how a node derives the current set from a self-describing chain: the
+    genesis block carries an ``ADD`` for each initial validator, and later blocks
+    carry the subsequent changes.
+    """
+    keys: dict[str, PublicKey] = {}
+    _apply(keys, changes)
+    if not keys:
+        raise ValueError("no validators derived from the chain")
+    return ValidatorSet(list(keys.values()))
+
+
+def _apply(keys: dict[str, PublicKey], changes: list[ValidatorChange]) -> None:
     for change in changes:
         if change.action is ChangeAction.ADD:
             keys[change.validator] = PublicKey.from_hex(change.validator)
         else:  # REMOVE
             keys.pop(change.validator, None)
-    if not keys:
-        raise ValueError("a validator change must not empty the validator set")
-    return ValidatorSet(list(keys.values()))

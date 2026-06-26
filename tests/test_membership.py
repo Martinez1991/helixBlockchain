@@ -5,12 +5,13 @@ from __future__ import annotations
 import pytest
 
 from helix_blockchain.consensus.validator_set import ValidatorSet
-from helix_blockchain.domain.block import Block
+from helix_blockchain.domain.block import Block, genesis_block
 from helix_blockchain.domain.crypto import PrivateKey
 from helix_blockchain.domain.membership import (
     ChangeAction,
     ValidatorChange,
     apply_changes,
+    derive_validator_set,
 )
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
@@ -73,6 +74,32 @@ def test_block_validator_changes_roundtrip():
     restored = Block.from_dict(block.to_dict())
     assert restored.validator_changes == [change]
     assert restored.hash == block.hash
+
+
+# ── self-describing genesis ────────────────────────────────────────────
+def test_genesis_embeds_validator_set():
+    keys = [PrivateKey.generate().public for _ in range(3)]
+    vs = ValidatorSet(keys)
+    genesis = genesis_block(vs)
+    assert genesis.index == 0
+    assert genesis.has_consistent_merkle_root()
+    assert all(c.action is ChangeAction.ADD for c in genesis.validator_changes)
+    # The set is recoverable purely from the genesis block's changes.
+    derived = derive_validator_set(genesis.validator_changes)
+    assert {v.to_hex() for v in derived} == {k.to_hex() for k in keys}
+
+
+def test_genesis_hash_depends_on_validator_set():
+    a = ValidatorSet([PrivateKey.generate().public for _ in range(3)])
+    b = ValidatorSet([PrivateKey.generate().public for _ in range(3)])
+    assert genesis_block(a).hash != genesis_block(b).hash
+    # Same set -> identical genesis across nodes (deterministic ordering).
+    assert genesis_block(a).hash == genesis_block(a).hash
+
+
+def test_empty_genesis_still_supported():
+    # Domain Blockchain tests construct a genesis with no embedded set.
+    assert genesis_block().validator_changes == []
 
 
 # ── node-level ─────────────────────────────────────────────────────────

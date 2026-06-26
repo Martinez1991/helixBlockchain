@@ -33,6 +33,7 @@ from helix_blockchain.domain.membership import (
     ChangeAction,
     ValidatorChange,
     apply_changes,
+    derive_validator_set,
 )
 from helix_blockchain.domain.records import IntegrityRecord
 from helix_blockchain.network.transport import Transport
@@ -78,12 +79,17 @@ class Node:
         self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue()
 
         if self.repo.height() < 0:
-            self.repo.append(genesis_block())
-        # Derive the active validator set by replaying committed membership changes.
-        self._active = self._genesis_validators
-        for block in self.repo.load_all():
-            if block.validator_changes:
-                self._active = apply_changes(self._active, block.validator_changes)
+            # Genesis embeds the initial validator set, making the chain
+            # self-describing.
+            self.repo.append(genesis_block(self._genesis_validators))
+        # Derive the active validator set purely from the chain: genesis carries
+        # an ADD per initial validator, later blocks carry the changes.
+        all_changes = [
+            change
+            for block in self.repo.load_all()
+            for change in block.validator_changes
+        ]
+        self._active = derive_validator_set(all_changes)
         self._engine = self._new_engine()
 
     # ── validator set ──────────────────────────────────────────────────

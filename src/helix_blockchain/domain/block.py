@@ -9,12 +9,13 @@ collected commit signatures are stored on the block as the finality proof.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
 from helix_blockchain.domain.canonical import canonical_bytes
 from helix_blockchain.domain.crypto import PublicKey, sha256_hex
-from helix_blockchain.domain.membership import ValidatorChange
+from helix_blockchain.domain.membership import ChangeAction, ValidatorChange
 from helix_blockchain.domain.merkle import merkle_root
 from helix_blockchain.domain.records import IntegrityRecord
 
@@ -137,14 +138,29 @@ class Block:
         )
 
 
-def genesis_block(proposer: str = ZERO_HASH, timestamp: int = 0) -> Block:
-    """Deterministic genesis block shared by all nodes in a network."""
+def genesis_block(
+    validators: Iterable[PublicKey] | None = None,
+    *,
+    proposer: str = ZERO_HASH,
+    timestamp: int = 0,
+) -> Block:
+    """Deterministic genesis block shared by all nodes in a network.
+
+    When ``validators`` is given, the genesis block embeds an ``ADD`` change for
+    each, so the chain is self-describing: the active validator set at any height
+    is derived purely by replaying changes from genesis onward."""
+    changes = (
+        [ValidatorChange(ChangeAction.ADD, v.to_hex()) for v in validators]
+        if validators
+        else []
+    )
     return Block.create(
         index=0,
         previous_hash=ZERO_HASH,
         timestamp=timestamp,
         proposer=proposer,
         records=[],
+        validator_changes=changes,
     )
 
 

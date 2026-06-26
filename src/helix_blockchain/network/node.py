@@ -28,8 +28,12 @@ from helix_blockchain.consensus.engine import (
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.block import Block, genesis_block
-from helix_blockchain.domain.crypto import PrivateKey
-from helix_blockchain.domain.membership import ValidatorChange, apply_changes
+from helix_blockchain.domain.crypto import PrivateKey, PublicKey
+from helix_blockchain.domain.membership import (
+    ChangeAction,
+    ValidatorChange,
+    apply_changes,
+)
 from helix_blockchain.domain.records import IntegrityRecord
 from helix_blockchain.network.transport import Transport
 from helix_blockchain.storage.repository import BlockRepository
@@ -127,10 +131,38 @@ class Node:
         await self._ingest_records(records, gossip=False)
 
     async def submit_validator_change(self, change: ValidatorChange) -> None:
-        """Queue an add/remove of a validator to be committed in the next block."""
+        """Queue an add/remove of a validator, gossip it, and maybe propose."""
+        await self._ingest_changes([change], gossip=True)
+
+    async def receive_validator_changes(self, changes: list[ValidatorChange]) -> None:
+        """Apply validator changes gossiped by a peer (no re-gossip)."""
+        await self._ingest_changes(changes, gossip=False)
+
+    async def _ingest_changes(
+        self, changes: list[ValidatorChange], *, gossip: bool
+    ) -> None:
         async with self._lock:
-            self._pending_changes.append(change)
+            fresh = [
+                c for c in changes
+                if self._is_effective(c) and c not in self._pending_changes
+            ]
+            if not fresh:
+                return
+            self._pending_changes.extend(fresh)
+            if gossip:
+                await self.transport.gossip_changes([c.to_dict() for c in fresh])
             await self._apply_locked(self._set_pending())
+
+    def _is_effective(self, change: ValidatorChange) -> bool:
+        """A change is effective only if it actually alters the active set, so
+        no-ops (add-existing / remove-absent) never spawn pointless blocks."""
+        try:
+            present = self._active.contains(PublicKey.from_hex(change.validator))
+        except ValueError:
+            return False
+        if change.action is ChangeAction.ADD:
+            return not present
+        return present
 
     async def _ingest_records(
         self, records: list[IntegrityRecord], *, gossip: bool

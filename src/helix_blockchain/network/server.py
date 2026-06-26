@@ -4,6 +4,7 @@ Endpoints:
 
 * ``POST /consensus`` — receive a consensus message from a peer.
 * ``POST /mempool`` — receive integrity records gossiped by a peer.
+* ``POST /membership`` — receive validator-set changes gossiped by a peer.
 * ``POST /block`` — receive a finalized block pushed by a peer.
 * ``GET  /blocks/{index}`` — serve a finalized block (used for catch-up sync).
 * ``GET  /chain`` — chain height + latest hash.
@@ -70,6 +71,17 @@ def create_app(
                 status_code=400, detail=f"malformed records: {exc}"
             ) from exc
         await node.receive_records(records)
+        return {"status": "accepted"}
+
+    @app.post("/membership", dependencies=auth)
+    async def membership(payload: dict[str, Any]) -> dict[str, str]:
+        try:
+            changes = [ValidatorChange.from_dict(c) for c in payload["changes"]]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"malformed changes: {exc}"
+            ) from exc
+        await node.receive_validator_changes(changes)
         return {"status": "accepted"}
 
     @app.post("/block", dependencies=auth)

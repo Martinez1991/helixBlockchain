@@ -24,6 +24,9 @@ class NullTransport:
     async def gossip_records(self, records):
         return None
 
+    async def gossip_changes(self, changes):
+        return None
+
     async def gossip_block(self, block):
         return None
 

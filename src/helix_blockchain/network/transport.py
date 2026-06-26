@@ -38,13 +38,18 @@ class Transport(Protocol):
     async def gossip_records(self, records: list[dict[str, Any]]) -> None:
         """Share newly observed integrity records with every peer."""
 
+    async def gossip_changes(self, changes: list[dict[str, Any]]) -> None:
+        """Share pending validator-set changes with every peer."""
+
     async def gossip_block(self, block: dict[str, Any]) -> None:
         """Push a finalized block to every peer."""
 
 
 _MessageHandler = Callable[[ConsensusMessage], Awaitable[None]]
 _BlockGetter = Callable[[int], Awaitable[Block | None]]
-_RecordsHandler = Callable[[list[dict[str, Any]]], Awaitable[None]]
+_PayloadHandler = Callable[[list[dict[str, Any]]], Awaitable[None]]
+_RecordsHandler = _PayloadHandler
+_ChangesHandler = _PayloadHandler
 _BlockHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -61,6 +66,7 @@ class InMemoryNetwork:
         self._handlers: dict[str, _MessageHandler] = {}
         self._getters: dict[str, _BlockGetter] = {}
         self._record_handlers: dict[str, _RecordsHandler] = {}
+        self._change_handlers: dict[str, _ChangesHandler] = {}
         self._block_handlers: dict[str, _BlockHandler] = {}
         self.partitioned: set[str] = set()
         # Each item is (kind, sender_id, payload).
@@ -73,6 +79,7 @@ class InMemoryNetwork:
         get_block: _BlockGetter,
         on_records: _RecordsHandler | None = None,
         on_block: _BlockHandler | None = None,
+        on_changes: _ChangesHandler | None = None,
     ) -> InMemoryTransport:
         self._handlers[node_id] = on_message
         self._getters[node_id] = get_block
@@ -80,6 +87,8 @@ class InMemoryNetwork:
             self._record_handlers[node_id] = on_records
         if on_block is not None:
             self._block_handlers[node_id] = on_block
+        if on_changes is not None:
+            self._change_handlers[node_id] = on_changes
         return InMemoryTransport(self, node_id)
 
     def _enqueue(self, kind: str, sender_id: str, payload: Any) -> None:
@@ -103,6 +112,7 @@ class InMemoryNetwork:
         handlers_by_kind = {
             "msg": self._handlers,
             "records": self._record_handlers,
+            "changes": self._change_handlers,
             "block": self._block_handlers,
         }
         while self._queue:
@@ -131,6 +141,9 @@ class InMemoryTransport:
 
     async def gossip_records(self, records: list[dict[str, Any]]) -> None:
         self._network._enqueue("records", self.self_id, records)
+
+    async def gossip_changes(self, changes: list[dict[str, Any]]) -> None:
+        self._network._enqueue("changes", self.self_id, changes)
 
     async def gossip_block(self, block: dict[str, Any]) -> None:
         self._network._enqueue("block", self.self_id, block)
@@ -170,6 +183,9 @@ class HttpTransport:
 
     async def gossip_records(self, records: list[dict[str, Any]]) -> None:
         await self._post_all("/mempool", {"records": records})
+
+    async def gossip_changes(self, changes: list[dict[str, Any]]) -> None:
+        await self._post_all("/membership", {"changes": changes})
 
     async def gossip_block(self, block: dict[str, Any]) -> None:
         await self._post_all("/block", block)

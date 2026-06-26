@@ -10,13 +10,21 @@ Endpoints:
 * ``GET  /health`` — liveness probe.
 * ``POST /admin/submit`` — (debug only) inject synthetic integrity records to
   drive a consensus round without a live FIWARE federation.
+
+The mutating peer-to-peer endpoints (``/consensus``, ``/mempool``, ``/block``)
+and ``/admin/submit`` are guarded by a shared bearer token when ``cluster_token``
+is configured. Read endpoints stay open (blocks are self-verifying via their
+finality certificates). ``/mempool`` is the main reason auth matters: gossiped
+records are not individually signed, so an unauthenticated peer could otherwise
+inject bogus tampering reports.
 """
 
 from __future__ import annotations
 
+import hmac
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
@@ -24,10 +32,22 @@ from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
 
 
-def create_app(node: Node, *, debug_api: bool = False) -> FastAPI:
+def create_app(
+    node: Node, *, debug_api: bool = False, cluster_token: str = ""
+) -> FastAPI:
     app = FastAPI(title="Helix Blockchain Node", version="0.2.0")
 
-    @app.post("/consensus")
+    async def require_token(authorization: str = Header(default="")) -> None:
+        if not cluster_token:
+            return  # auth disabled
+        expected = f"Bearer {cluster_token}"
+        # Constant-time comparison avoids leaking the token via timing.
+        if not hmac.compare_digest(authorization, expected):
+            raise HTTPException(status_code=401, detail="invalid or missing token")
+
+    auth = [Depends(require_token)]
+
+    @app.post("/consensus", dependencies=auth)
     async def consensus(payload: dict[str, Any]) -> dict[str, str]:
         try:
             message = ConsensusMessage.from_dict(payload)
@@ -40,7 +60,7 @@ def create_app(node: Node, *, debug_api: bool = False) -> FastAPI:
         node.enqueue_inbound(message)
         return {"status": "accepted"}
 
-    @app.post("/mempool")
+    @app.post("/mempool", dependencies=auth)
     async def mempool(payload: dict[str, Any]) -> dict[str, str]:
         try:
             records = [IntegrityRecord.from_dict(r) for r in payload["records"]]
@@ -51,7 +71,7 @@ def create_app(node: Node, *, debug_api: bool = False) -> FastAPI:
         await node.receive_records(records)
         return {"status": "accepted"}
 
-    @app.post("/block")
+    @app.post("/block", dependencies=auth)
     async def push_block(payload: dict[str, Any]) -> dict[str, str]:
         try:
             block = Block.from_dict(payload)
@@ -86,7 +106,7 @@ def create_app(node: Node, *, debug_api: bool = False) -> FastAPI:
 
     if debug_api:
 
-        @app.post("/admin/submit")
+        @app.post("/admin/submit", dependencies=auth)
         async def admin_submit(count: int = 1) -> dict[str, Any]:
             """Inject ``count`` synthetic integrity records (testing hook)."""
             ts = node.now_ms()

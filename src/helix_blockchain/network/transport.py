@@ -138,9 +138,12 @@ class InMemoryTransport:
 class HttpTransport:
     """Production transport over HTTP using ``httpx``."""
 
-    def __init__(self, peers: list[Peer], timeout: float = 3.0) -> None:
+    def __init__(
+        self, peers: list[Peer], timeout: float = 3.0, cluster_token: str = ""
+    ) -> None:
         self._peers = peers
-        self._client = httpx.AsyncClient(timeout=timeout)
+        headers = {"Authorization": f"Bearer {cluster_token}"} if cluster_token else None
+        self._client = httpx.AsyncClient(timeout=timeout, headers=headers)
 
     async def _post_all(self, path: str, payload: Any) -> None:
         async def _post(peer):

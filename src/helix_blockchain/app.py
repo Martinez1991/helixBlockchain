@@ -48,7 +48,7 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         [private_key.public, *(p.public_key for p in settings.consensus.peers)]
     )
     repo = SqlBlockRepository(settings.storage.url)
-    transport = HttpTransport(settings.consensus.peers)
+    transport = HttpTransport(settings.consensus.peers, cluster_token=settings.cluster_token)
     notifier = ConsoleNotifier()
     node = Node(
         node_id=settings.node.node_id,
@@ -87,7 +87,9 @@ async def monitor_loop(node: Node, settings: Settings) -> None:
 
 async def run(settings: Settings) -> None:
     node, transport = build_node(settings)
-    api = create_app(node, debug_api=settings.debug_api)
+    api = create_app(
+        node, debug_api=settings.debug_api, cluster_token=settings.cluster_token
+    )
     config = uvicorn.Config(
         api,
         host=settings.consensus.bind_host,

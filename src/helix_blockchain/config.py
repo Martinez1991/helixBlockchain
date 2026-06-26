@@ -95,8 +95,11 @@ class Settings(BaseSettings):
     consensus: ConsensusSettings = Field(default_factory=ConsensusSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     log_level: str = "INFO"
-    # Enables the unauthenticated /admin/submit test hook. Demo/testing only.
+    # Enables the /admin/submit test hook. Demo/testing only.
     debug_api: bool = False
+    # Shared bearer token authenticating peer-to-peer endpoints (/consensus,
+    # /mempool, /block). When empty, authentication is disabled (dev only).
+    cluster_token: str = ""
 
 
 def load_settings() -> Settings:

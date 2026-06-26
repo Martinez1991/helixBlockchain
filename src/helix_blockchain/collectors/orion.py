@@ -34,6 +34,8 @@ class MongoOrionGateway:
     def _client_for(self, host: str) -> MongoClient:
         if host not in self._clients:
             kwargs: dict = {"tls": self._settings.tls, "serverSelectionTimeoutMS": 3000}
+            if self._settings.tls and self._settings.tls_ca_file:
+                kwargs["tlsCAFile"] = self._settings.tls_ca_file
             # Only authenticate when credentials are configured; the demo Mongo
             # runs without auth, and passing empty credentials would fail SCRAM.
             if self._settings.password:

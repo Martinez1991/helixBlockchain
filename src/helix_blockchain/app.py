@@ -26,6 +26,7 @@ from helix_blockchain.network.server import create_app
 from helix_blockchain.network.transport import HttpTransport
 from helix_blockchain.notify.notifier import ConsoleNotifier
 from helix_blockchain.storage.sql import SqlBlockRepository
+from helix_blockchain.tls import uvicorn_ssl_kwargs
 
 log = logging.getLogger("helix.app")
 
@@ -48,7 +49,11 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         [private_key.public, *(p.public_key for p in settings.consensus.peers)]
     )
     repo = SqlBlockRepository(settings.storage.url)
-    transport = HttpTransport(settings.consensus.peers, cluster_token=settings.cluster_token)
+    transport = HttpTransport(
+        settings.consensus.peers,
+        cluster_token=settings.cluster_token,
+        tls=settings.tls,
+    )
     notifier = ConsoleNotifier()
     node = Node(
         node_id=settings.node.node_id,
@@ -95,6 +100,7 @@ async def run(settings: Settings) -> None:
         host=settings.consensus.bind_host,
         port=settings.consensus.bind_port,
         log_level=settings.log_level.lower(),
+        **uvicorn_ssl_kwargs(settings.tls),
     )
     server = uvicorn.Server(config)
     # Round-change fires if a height stalls for ~3x the block interval.

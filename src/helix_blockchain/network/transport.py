@@ -22,9 +22,10 @@ from typing import Any, Protocol
 
 import httpx
 
-from helix_blockchain.config import Peer
+from helix_blockchain.config import Peer, TlsSettings
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
+from helix_blockchain.tls import httpx_tls_kwargs, scheme
 
 
 class Transport(Protocol):
@@ -136,20 +137,30 @@ class InMemoryTransport:
 
 
 class HttpTransport:
-    """Production transport over HTTP using ``httpx``."""
+    """Production transport over HTTP(S) using ``httpx``."""
 
     def __init__(
-        self, peers: list[Peer], timeout: float = 3.0, cluster_token: str = ""
+        self,
+        peers: list[Peer],
+        timeout: float = 3.0,
+        cluster_token: str = "",
+        tls: TlsSettings | None = None,
     ) -> None:
         self._peers = peers
+        self._scheme = scheme(tls) if tls else "http"
         headers = {"Authorization": f"Bearer {cluster_token}"} if cluster_token else None
-        self._client = httpx.AsyncClient(timeout=timeout, headers=headers)
+        self._client = httpx.AsyncClient(
+            timeout=timeout, headers=headers, **(httpx_tls_kwargs(tls) if tls else {})
+        )
+
+    def _url(self, peer: Peer, path: str) -> str:
+        return f"{self._scheme}://{peer.host}:{peer.port}{path}"
 
     async def _post_all(self, path: str, payload: Any) -> None:
         async def _post(peer):
             # Best-effort: BFT tolerates unreachable peers up to f.
             with contextlib.suppress(httpx.HTTPError):
-                await self._client.post(f"{peer.base_url}{path}", json=payload)
+                await self._client.post(self._url(peer, path), json=payload)
 
         # Concurrent so one slow/down peer doesn't delay delivery to the others.
         await asyncio.gather(*(_post(p) for p in self._peers))
@@ -166,7 +177,7 @@ class HttpTransport:
     async def fetch_block(self, index: int) -> Block | None:
         for peer in self._peers:
             try:
-                resp = await self._client.get(f"{peer.base_url}/blocks/{index}")
+                resp = await self._client.get(self._url(peer, f"/blocks/{index}"))
                 if resp.status_code == 200:
                     return Block.from_dict(resp.json())
             except httpx.HTTPError:

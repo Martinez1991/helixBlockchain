@@ -25,6 +25,7 @@ import httpx
 from helix_blockchain.config import Peer, TlsSettings
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
+from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.tls import httpx_tls_kwargs, scheme
 
 
@@ -43,6 +44,12 @@ class Transport(Protocol):
 
     async def gossip_block(self, block: dict[str, Any]) -> None:
         """Push a finalized block to every peer."""
+
+    async def fetch_peers(self) -> list[Peer]:
+        """Pull peers' registries for discovery (empty if not supported)."""
+
+    async def announce(self, specs: list[str]) -> None:
+        """Announce peer specs (including our own) to every peer."""
 
 
 _MessageHandler = Callable[[ConsensusMessage], Awaitable[None]]
@@ -148,18 +155,24 @@ class InMemoryTransport:
     async def gossip_block(self, block: dict[str, Any]) -> None:
         self._network._enqueue("block", self.self_id, block)
 
+    async def fetch_peers(self) -> list[Peer]:
+        return []  # in-process tests wire handlers directly; no discovery needed
+
+    async def announce(self, specs: list[str]) -> None:
+        return None
+
 
 class HttpTransport:
     """Production transport over HTTP(S) using ``httpx``."""
 
     def __init__(
         self,
-        peers: list[Peer],
+        registry: PeerRegistry,
         timeout: float = 3.0,
         cluster_token: str = "",
         tls: TlsSettings | None = None,
     ) -> None:
-        self._peers = peers
+        self._registry = registry
         self._scheme = scheme(tls) if tls else "http"
         headers = {"Authorization": f"Bearer {cluster_token}"} if cluster_token else None
         self._client = httpx.AsyncClient(
@@ -175,8 +188,9 @@ class HttpTransport:
             with contextlib.suppress(httpx.HTTPError):
                 await self._client.post(self._url(peer, path), json=payload)
 
-        # Concurrent so one slow/down peer doesn't delay delivery to the others.
-        await asyncio.gather(*(_post(p) for p in self._peers))
+        # Peers come from the dynamic registry, so newly discovered validators
+        # are reached without a restart. Concurrent so one slow peer can't stall.
+        await asyncio.gather(*(_post(p) for p in self._registry.current()))
 
     async def broadcast(self, message: ConsensusMessage) -> None:
         await self._post_all("/consensus", message.to_dict())
@@ -191,7 +205,7 @@ class HttpTransport:
         await self._post_all("/block", block)
 
     async def fetch_block(self, index: int) -> Block | None:
-        for peer in self._peers:
+        for peer in self._registry.current():
             try:
                 resp = await self._client.get(self._url(peer, f"/blocks/{index}"))
                 if resp.status_code == 200:
@@ -199,6 +213,22 @@ class HttpTransport:
             except httpx.HTTPError:
                 continue
         return None
+
+    async def fetch_peers(self) -> list[Peer]:
+        discovered: list[Peer] = []
+        for peer in self._registry.current():
+            try:
+                resp = await self._client.get(self._url(peer, "/peers"))
+                if resp.status_code == 200:
+                    for spec in resp.json().get("peers", []):
+                        with contextlib.suppress(ValueError):
+                            discovered.append(Peer.parse(spec))
+            except httpx.HTTPError:
+                continue
+        return discovered
+
+    async def announce(self, specs: list[str]) -> None:
+        await self._post_all("/peers", {"peers": specs})
 
     async def aclose(self) -> None:
         await self._client.aclose()

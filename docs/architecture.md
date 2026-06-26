@@ -133,16 +133,34 @@ on-chain**:
 - Um nó removido continua acompanhando a cadeia como **follower passivo** (sem
   motor de consenso) e pode voltar a votar se readicionado. A verificação de
   finalidade de cada bloco usa o conjunto ativo **na altura daquele bloco**.
+- Mudanças de validador são **propagadas por gossip** (`/membership`): qualquer
+  proposer inclui as mudanças pendentes, então basta submeter a um validador.
+  No-ops (adicionar existente / remover ausente) são descartados.
+- O **bloco genesis embute o conjunto inicial** (um `ADD` por validador), então
+  o conjunto ativo é derivado **puramente da cadeia** — tamper-evident e uniforme.
+
+## Descoberta de peers
+
+Com membership dinâmico, um validador adicionado depois não estaria no `peers`
+estático dos demais. Cada nó mantém um **registro dinâmico** `chave pública →
+endereço`, semeado da config e do próprio endereço anunciado
+(`HELIX_CONSENSUS__ADVERTISE`), e o troca via `/peers`:
+
+- `GET /peers` devolve os specs conhecidos (incluindo o próprio);
+- `POST /peers` mescla specs recebidos (anúncio);
+- um loop periódico anuncia-se e puxa os registros dos peers, propagando o
+  endereço de um recém-chegado pelo cluster. O transporte envia para os peers do
+  **registro** (não da lista estática), então novos validadores são alcançados
+  sem reinício. O registro é chaveado por chave pública: um re-anúncio com novo
+  endereço atualiza no lugar.
 
 ## Limitações conhecidas / trabalho futuro
 
-- **Mudanças de validador não são propagadas por gossip** (ao contrário dos
-  registros). Uma mudança só é proposta pelo nó em que foi submetida quando ele
-  é o proposer; na prática, submeta a mudança ao proposer atual ou a todos os
-  validadores (a aplicação é idempotente). Propagar mudanças no mempool é uma
-  evolução natural.
-- **Novo validador precisa de pré-configuração.** Ao adicionar um validador, o
-  novo nó deve ser iniciado com o mesmo conjunto genesis e a lista de peers para
-  derivar a cadeia corretamente; não há descoberta automática.
-- **Conjunto genesis vem da config**, não está embutido no bloco genesis. Um nó
-  totalmente novo precisa ser configurado com o conjunto inicial correto.
+- **Construção do genesis ainda vem da config.** O bloco genesis embute o
+  conjunto inicial, mas cada nó o constrói localmente a partir da config (mesmo
+  conjunto em todos). Um nó totalmente novo precisa do conjunto genesis correto
+  na config (ou poderia sincronizar o bloco 0 de um peer — evolução futura).
+- **Descoberta exige ao menos um seed.** Um nó novo precisa de pelo menos um peer
+  configurado para se anunciar e puxar o restante do registro.
+- **Sem rotação de chaves** de validador nem expiração de membership; mudanças
+  são manuais via `/admin/validator`.

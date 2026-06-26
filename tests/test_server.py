@@ -28,6 +28,12 @@ class NullTransport:
     async def gossip_block(self, block):
         return None
 
+    async def fetch_peers(self):
+        return []
+
+    async def announce(self, specs):
+        return None
+
 
 def build_single_node() -> Node:
     key = PrivateKey.generate()

@@ -91,6 +91,9 @@ class ConsensusSettings(BaseSettings):
     bind_host: str = "0.0.0.0"
     bind_port: int = 8000
     block_interval: float = 5.0
+    # This node's address as peers should reach it (e.g. "node-1:8000"). Used to
+    # announce itself for peer discovery; empty disables self-announcement.
+    advertise: str = ""
 
     @field_validator("peers", mode="before")
     @classmethod

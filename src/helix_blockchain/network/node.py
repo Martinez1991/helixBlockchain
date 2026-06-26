@@ -36,6 +36,7 @@ from helix_blockchain.domain.membership import (
     derive_validator_set,
 )
 from helix_blockchain.domain.records import IntegrityRecord
+from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.network.transport import Transport
 from helix_blockchain.storage.repository import BlockRepository
 
@@ -56,6 +57,7 @@ class Node:
         transport: Transport,
         now_ms: Callable[[], int],
         on_commit: CommitHook | None = None,
+        peer_registry: PeerRegistry | None = None,
     ) -> None:
         self.node_id = node_id
         self.private_key = private_key
@@ -65,6 +67,7 @@ class Node:
         self.transport = transport
         self.now_ms = now_ms
         self.on_commit = on_commit
+        self.peer_registry = peer_registry or PeerRegistry(self.me.to_hex())
 
         self._pending: list[IntegrityRecord] = []
         self._pending_changes: list[ValidatorChange] = []
@@ -223,6 +226,24 @@ class Node:
             if self._engine is None or message.height != self._engine.height:
                 return  # follower, or stale/future after sync; ignore
             await self._apply_locked(self._engine.handle(message))
+
+    async def discovery_loop(self, interval_s: float) -> None:
+        """Announce ourselves and pull peers' registries to learn new addresses."""
+        while True:
+            try:
+                await self._announce_self()
+                discovered = await self.transport.fetch_peers()
+                added = self.peer_registry.merge(discovered) if discovered else 0
+                if added:
+                    log.info("node=%s discovered %d new peer(s)", self.node_id, added)
+            except Exception:  # noqa: BLE001 — discovery is best-effort
+                log.exception("node=%s discovery iteration failed", self.node_id)
+            await asyncio.sleep(interval_s)
+
+    async def _announce_self(self) -> None:
+        specs = self.peer_registry.specs()
+        if specs:
+            await self.transport.announce(specs)
 
     async def round_timer_loop(self, timeout_s: float) -> None:
         """Background task: round-change if the height stalls for ``timeout_s``."""

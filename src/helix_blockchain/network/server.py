@@ -28,6 +28,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
+from helix_blockchain.domain.membership import ValidatorChange
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
 
@@ -98,6 +99,8 @@ def create_app(
             "latest_hash": latest.hash if latest else None,
             "validators": node.validators.size,
             "quorum": node.validators.quorum,
+            "is_validator": node.is_validator,
+            "validator_keys": [v.to_hex() for v in node.validators],
         }
 
     @app.get("/health")
@@ -123,5 +126,17 @@ def create_app(
             ]
             await node.submit_records(records)
             return {"submitted": count, "height": node.height}
+
+        @app.post("/admin/validator", dependencies=auth)
+        async def admin_validator(payload: dict[str, Any]) -> dict[str, Any]:
+            """Queue a validator add/remove (testing/ops hook)."""
+            try:
+                change = ValidatorChange.from_dict(payload)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"malformed change: {exc}"
+                ) from exc
+            await node.submit_validator_change(change)
+            return {"queued": change.to_dict(), "height": node.height}
 
     return app

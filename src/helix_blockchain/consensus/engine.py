@@ -32,6 +32,7 @@ from helix_blockchain.consensus.messages import ConsensusMessage, MessageType
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.block import ZERO_HASH, Block
 from helix_blockchain.domain.crypto import PrivateKey, PublicKey
+from helix_blockchain.domain.membership import ValidatorChange
 from helix_blockchain.domain.records import IntegrityRecord
 
 
@@ -75,6 +76,7 @@ class ConsensusEngine:
         self._now_ms = now_ms
 
         self._pending: list[IntegrityRecord] = []
+        self._pending_changes: list[ValidatorChange] = []
         # The lock: the highest round at which we prepared, and its proof.
         self.prepared_round: int | None = None
         self.prepared_block: Block | None = None
@@ -106,9 +108,14 @@ class ConsensusEngine:
         return self.phase == Phase.COMMITTED
 
     # ── pending records / proposing ────────────────────────────────────
-    def set_pending(self, records: list[IntegrityRecord]) -> StepResult:
-        """Update the records this node wants to include and propose if due."""
+    def set_pending(
+        self,
+        records: list[IntegrityRecord],
+        changes: list[ValidatorChange] | None = None,
+    ) -> StepResult:
+        """Update what this node wants to include and propose if due."""
         self._pending = list(records)
+        self._pending_changes = list(changes or [])
         result = StepResult()
         self._maybe_propose_round0(result)
         return result
@@ -122,7 +129,7 @@ class ConsensusEngine:
             self.round == 0
             and self.phase == Phase.NEW_ROUND
             and self.is_proposer()
-            and self._pending
+            and (self._pending or self._pending_changes)
         ):
             block = self._build_block(self._pending)
             self._emit_pre_prepare(block, round_change_cert=None, result=result)
@@ -134,6 +141,7 @@ class ConsensusEngine:
             timestamp=self._now_ms(),
             proposer=self.me.to_hex(),
             records=records,
+            validator_changes=self._pending_changes,
         )
 
     def _emit_pre_prepare(

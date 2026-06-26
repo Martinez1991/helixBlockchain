@@ -103,12 +103,46 @@ valor autoritativo do broker principal:
   perdeu as rodadas de consenso recebe o bloco imediatamente; lacunas maiores
   ainda são preenchidas pelo pull-sync.
 
+## Segurança da camada P2P
+
+- **Autenticação por token de cluster.** Os endpoints que alteram estado
+  (`/consensus`, `/mempool`, `/block`, `/admin/*`) exigem um Bearer token
+  compartilhado (`HELIX_CLUSTER_TOKEN`), comparado em tempo constante. Endpoints
+  de leitura ficam abertos (blocos são auto-verificáveis pelo certificado de
+  finalidade). Isso fecha a principal brecha: registros de `/mempool` não são
+  assinados individualmente, então sem auth um peer poderia injetar relatos
+  falsos de adulteração. Mensagens de consenso já são assinadas por validador.
+- **TLS / mTLS.** A camada P2P pode rodar sobre HTTPS (`HELIX_TLS__*`), com mTLS
+  opcional (cada validador apresenta e exige certificado de cliente, verificado
+  contra a CA do cluster). O MongoDB do Orion também aceita CA própria
+  (`HELIX_ORION__TLS_CA_FILE`). Gere certs de desenvolvimento com
+  `python -m helix_blockchain.tools.gen_certs`.
+
+## Membership dinâmico de validadores
+
+O conjunto de validadores pode mudar sem fork porque as mudanças são **acordadas
+on-chain**:
+
+- Uma mudança (`ADD`/`REMOVE` de uma chave pública) é conteúdo do bloco — coberta
+  pela raiz de Merkle e finalizada por consenso.
+- O conjunto **ativo** numa altura `h` é o conjunto genesis (configurado) com
+  todas as mudanças dos blocos `1..h-1` aplicadas — uma mudança commitada no
+  bloco `h` vale a partir de `h+1`. Assim o bloco `h` é sempre validado pelo
+  conjunto anterior à sua própria mudança, e todos os nós derivam o mesmo
+  conjunto/quórum a cada altura.
+- Um nó removido continua acompanhando a cadeia como **follower passivo** (sem
+  motor de consenso) e pode voltar a votar se readicionado. A verificação de
+  finalidade de cada bloco usa o conjunto ativo **na altura daquele bloco**.
+
 ## Limitações conhecidas / trabalho futuro
 
-- **TLS** entre validadores e com o MongoDB deve ser habilitado em produção
-  (config `HELIX_ORION__TLS`; HTTPS via proxy reverso para o P2P).
-- **Autenticação dos endpoints de gossip.** `/mempool` e `/block` aceitam
-  payloads de qualquer origem alcançável; em produção, restrinja a rede dos
-  validadores e/ou exija mTLS. Mensagens de consenso já são assinadas por nó.
-- **Conjunto de validadores estático.** Adição/remoção de validadores exige
-  reconfiguração e reinício; não há mudança dinâmica de membership on-chain.
+- **Mudanças de validador não são propagadas por gossip** (ao contrário dos
+  registros). Uma mudança só é proposta pelo nó em que foi submetida quando ele
+  é o proposer; na prática, submeta a mudança ao proposer atual ou a todos os
+  validadores (a aplicação é idempotente). Propagar mudanças no mempool é uma
+  evolução natural.
+- **Novo validador precisa de pré-configuração.** Ao adicionar um validador, o
+  novo nó deve ser iniciado com o mesmo conjunto genesis e a lista de peers para
+  derivar a cadeia corretamente; não há descoberta automática.
+- **Conjunto genesis vem da config**, não está embutido no bloco genesis. Um nó
+  totalmente novo precisa ser configurado com o conjunto inicial correto.

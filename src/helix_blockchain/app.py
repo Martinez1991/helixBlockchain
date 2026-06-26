@@ -26,6 +26,7 @@ from helix_blockchain.network.server import create_app
 from helix_blockchain.network.transport import HttpTransport
 from helix_blockchain.notify.notifier import ConsoleNotifier
 from helix_blockchain.storage.sql import SqlBlockRepository
+from helix_blockchain.tls import uvicorn_ssl_kwargs
 
 log = logging.getLogger("helix.app")
 
@@ -48,7 +49,11 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         [private_key.public, *(p.public_key for p in settings.consensus.peers)]
     )
     repo = SqlBlockRepository(settings.storage.url)
-    transport = HttpTransport(settings.consensus.peers)
+    transport = HttpTransport(
+        settings.consensus.peers,
+        cluster_token=settings.cluster_token,
+        tls=settings.tls,
+    )
     notifier = ConsoleNotifier()
     node = Node(
         node_id=settings.node.node_id,
@@ -87,16 +92,26 @@ async def monitor_loop(node: Node, settings: Settings) -> None:
 
 async def run(settings: Settings) -> None:
     node, transport = build_node(settings)
-    api = create_app(node)
+    api = create_app(
+        node, debug_api=settings.debug_api, cluster_token=settings.cluster_token
+    )
     config = uvicorn.Config(
         api,
         host=settings.consensus.bind_host,
         port=settings.consensus.bind_port,
         log_level=settings.log_level.lower(),
+        **uvicorn_ssl_kwargs(settings.tls),
     )
     server = uvicorn.Server(config)
+    # Round-change fires if a height stalls for ~3x the block interval.
+    round_timeout = max(2.0, settings.consensus.block_interval * 3)
     try:
-        await asyncio.gather(server.serve(), monitor_loop(node, settings))
+        await asyncio.gather(
+            server.serve(),
+            node.inbound_worker(),
+            monitor_loop(node, settings),
+            node.round_timer_loop(round_timeout),
+        )
     finally:
         await transport.aclose()
 

@@ -5,9 +5,10 @@ machine: it consumes signed :class:`~helix_blockchain.consensus.messages.Consens
 objects and emits outgoing messages plus, on agreement, a finalized block. It has
 no networking or storage dependencies, so the full agreement protocol is unit
 testable with in-process validators.
+
+Import from the submodules directly (``consensus.engine``, ``consensus.messages``,
+``consensus.validator_set``). This package ``__init__`` deliberately performs no
+eager imports so that ``consensus.validator_set`` — depended on by the domain
+layer — can be imported without pulling in ``messages`` (which imports
+``domain.block``) and creating an import cycle.
 """
-
-from helix_blockchain.consensus.messages import ConsensusMessage, MessageType
-from helix_blockchain.consensus.validator_set import ValidatorSet
-
-__all__ = ["ValidatorSet", "ConsensusMessage", "MessageType"]

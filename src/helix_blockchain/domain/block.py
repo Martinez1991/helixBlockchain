@@ -14,6 +14,7 @@ from typing import Any
 
 from helix_blockchain.domain.canonical import canonical_bytes
 from helix_blockchain.domain.crypto import PublicKey, sha256_hex
+from helix_blockchain.domain.membership import ValidatorChange
 from helix_blockchain.domain.merkle import merkle_root
 from helix_blockchain.domain.records import IntegrityRecord
 
@@ -67,6 +68,14 @@ class Block:
     header: BlockHeader
     records: list[IntegrityRecord] = field(default_factory=list)
     commit_signatures: dict[str, str] = field(default_factory=dict)
+    validator_changes: list[ValidatorChange] = field(default_factory=list)
+
+    @staticmethod
+    def _leaves(
+        records: list[IntegrityRecord], changes: list[ValidatorChange]
+    ) -> list[bytes]:
+        # Records first, then membership changes; both are committed by the root.
+        return [r.canonical() for r in records] + [c.canonical() for c in changes]
 
     @classmethod
     def create(
@@ -76,8 +85,10 @@ class Block:
         timestamp: int,
         proposer: str,
         records: list[IntegrityRecord],
+        validator_changes: list[ValidatorChange] | None = None,
     ) -> Block:
-        root = merkle_root([r.canonical() for r in records]).hex()
+        changes = list(validator_changes or [])
+        root = merkle_root(cls._leaves(records, changes)).hex()
         header = BlockHeader(
             index=index,
             previous_hash=previous_hash,
@@ -85,7 +96,7 @@ class Block:
             merkle_root=root,
             proposer=proposer,
         )
-        return cls(header=header, records=list(records))
+        return cls(header=header, records=list(records), validator_changes=changes)
 
     @property
     def hash(self) -> str:
@@ -96,7 +107,7 @@ class Block:
         return self.header.index
 
     def computed_merkle_root(self) -> str:
-        return merkle_root([r.canonical() for r in self.records]).hex()
+        return merkle_root(self._leaves(self.records, self.validator_changes)).hex()
 
     def has_consistent_merkle_root(self) -> bool:
         """True iff the header's Merkle root matches the records it carries."""
@@ -111,6 +122,7 @@ class Block:
             "header": self.header.to_dict(),
             "records": [r.to_dict() for r in self.records],
             "commit_signatures": dict(self.commit_signatures),
+            "validator_changes": [c.to_dict() for c in self.validator_changes],
         }
 
     @classmethod
@@ -119,6 +131,9 @@ class Block:
             header=BlockHeader.from_dict(data["header"]),
             records=[IntegrityRecord.from_dict(r) for r in data["records"]],
             commit_signatures=dict(data.get("commit_signatures", {})),
+            validator_changes=[
+                ValidatorChange.from_dict(c) for c in data.get("validator_changes", [])
+            ],
         )
 
 

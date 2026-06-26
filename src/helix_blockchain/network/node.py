@@ -1,10 +1,17 @@
 """The consensus-driving node: glue between engine, storage and transport.
 
-A :class:`Node` runs one BFT height at a time. It buffers incoming integrity
-records, proposes a block when it is the round proposer, processes peer messages
-through the :class:`ConsensusEngine`, persists finalized blocks, and advances to
-the next height. It is transport-agnostic (see :mod:`.transport`) so it can be
-tested in-process and deployed over HTTP unchanged.
+A :class:`Node` runs one BFT height at a time. It keeps pending integrity records
+(and pending validator-set changes), feeds them to the :class:`ConsensusEngine`
+(which proposes when this node is the round proposer), processes peer messages,
+persists finalized blocks, advances to the next height, and drives the
+round-change timer for liveness.
+
+**Dynamic membership.** The node is configured with the *genesis* validator set;
+the *active* set at the working height is derived by replaying every committed
+block's validator changes onto it (effective at the next height). If this node is
+not in the active set it has no engine and runs as a passive follower — it still
+tracks the chain and can rejoin if re-added. It is transport-agnostic (see
+:mod:`.transport`) so it can be tested in-process and deployed over HTTP unchanged.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.block import Block, genesis_block
 from helix_blockchain.domain.crypto import PrivateKey
+from helix_blockchain.domain.membership import ValidatorChange, apply_changes
 from helix_blockchain.domain.records import IntegrityRecord
 from helix_blockchain.network.transport import Transport
 from helix_blockchain.storage.repository import BlockRepository
@@ -46,25 +54,49 @@ class Node:
     ) -> None:
         self.node_id = node_id
         self.private_key = private_key
-        self.validators = validators
+        self.me = private_key.public
+        self._genesis_validators = validators
         self.repo = repo
         self.transport = transport
         self.now_ms = now_ms
         self.on_commit = on_commit
 
         self._pending: list[IntegrityRecord] = []
+        self._pending_changes: list[ValidatorChange] = []
+        # Every record id ever seen (pending or committed): the mempool filter
+        # that stops gossiped records from looping or being recorded twice.
+        self._mempool_seen: set[str] = set()
         self._lock = asyncio.Lock()
+        # Inbound consensus messages are queued and processed by a single worker
+        # so the HTTP handler returns immediately. This is what prevents a
+        # re-entrant deadlock: a node broadcasting under its lock would otherwise
+        # block on a peer that synchronously broadcasts back to it.
+        self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue()
 
         if self.repo.height() < 0:
             self.repo.append(genesis_block())
+        # Derive the active validator set by replaying committed membership changes.
+        self._active = self._genesis_validators
+        for block in self.repo.load_all():
+            if block.validator_changes:
+                self._active = apply_changes(self._active, block.validator_changes)
         self._engine = self._new_engine()
 
-    # ── lifecycle ──────────────────────────────────────────────────────
-    def _new_engine(self) -> ConsensusEngine:
+    # ── validator set ──────────────────────────────────────────────────
+    @property
+    def validators(self) -> ValidatorSet:
+        """The validator set active at the current working height."""
+        return self._active
+
+    def _new_engine(self) -> ConsensusEngine | None:
+        """Build the engine for the next height, or ``None`` if this node is not
+        a validator in the active set (passive follower)."""
         latest = self.repo.latest()
         assert latest is not None
+        if not self._active.contains(self.me):
+            return None
         return ConsensusEngine(
-            validators=self.validators,
+            validators=self._active,
             private_key=self.private_key,
             height=latest.index + 1,
             previous_hash=latest.hash,
@@ -76,58 +108,175 @@ class Node:
         """Current chain tip index."""
         return self.repo.height()
 
+    @property
+    def round(self) -> int:
+        """Current consensus round at the working height (0 for a follower)."""
+        return self._engine.round if self._engine else 0
+
+    @property
+    def is_validator(self) -> bool:
+        return self._engine is not None
+
     # ── public API ─────────────────────────────────────────────────────
     async def submit_records(self, records: list[IntegrityRecord]) -> None:
-        """Queue integrity records for inclusion and propose if it's our turn."""
+        """Add locally observed records, gossip them to peers, and maybe propose."""
+        await self._ingest_records(records, gossip=True)
+
+    async def receive_records(self, records: list[IntegrityRecord]) -> None:
+        """Add records gossiped by a peer (no re-gossip in a full-mesh network)."""
+        await self._ingest_records(records, gossip=False)
+
+    async def submit_validator_change(self, change: ValidatorChange) -> None:
+        """Queue an add/remove of a validator to be committed in the next block."""
         async with self._lock:
-            self._pending.extend(records)
-            await self._maybe_propose_locked()
+            self._pending_changes.append(change)
+            await self._apply_locked(self._set_pending())
+
+    async def _ingest_records(
+        self, records: list[IntegrityRecord], *, gossip: bool
+    ) -> None:
+        async with self._lock:
+            fresh = [r for r in records if r.id not in self._mempool_seen]
+            if not fresh:
+                return
+            self._mempool_seen.update(r.id for r in fresh)
+            self._pending.extend(fresh)
+            if gossip:
+                await self.transport.gossip_records([r.to_dict() for r in fresh])
+            await self._apply_locked(self._set_pending())
+
+    async def ingest_block(self, block: Block) -> None:
+        """Apply a finalized block pushed by a peer (proactive gossip)."""
+        async with self._lock:
+            await self._apply_pushed_block_locked(block)
 
     async def tick(self) -> None:
-        """Drive a proposal if records are pending and we are the proposer."""
+        """Re-evaluate whether to propose with the current pending items."""
         async with self._lock:
-            await self._maybe_propose_locked()
+            await self._apply_locked(self._set_pending())
+
+    async def force_timeout(self) -> None:
+        """Trigger a round change for the current height (test/operator hook)."""
+        async with self._lock:
+            if self._engine is not None:
+                await self._apply_locked(self._engine.on_timeout())
+
+    def enqueue_inbound(self, message: ConsensusMessage) -> None:
+        """Queue a peer message for the worker (called from the HTTP handler)."""
+        self._inbox.put_nowait(message)
+
+    async def inbound_worker(self) -> None:
+        """Process queued inbound messages serially, off the HTTP request path."""
+        while True:
+            message = await self._inbox.get()
+            try:
+                await self.on_message(message)
+            except Exception:  # noqa: BLE001 — never let one bad message kill the worker
+                log.exception("node=%s failed to process inbound message", self.node_id)
+            finally:
+                self._inbox.task_done()
 
     async def on_message(self, message: ConsensusMessage) -> None:
         """Handle an inbound consensus message from a peer."""
         async with self._lock:
-            if message.height > self._engine.height:
+            working_height = self.repo.height() + 1
+            if message.height > working_height:
                 await self._sync_locked(up_to=message.height - 1)
-            if message.height != self._engine.height:
-                return  # stale or still-future after sync; ignore
-            result = self._engine.handle(message)
-            await self._apply_locked(result)
+            if self._engine is None or message.height != self._engine.height:
+                return  # follower, or stale/future after sync; ignore
+            await self._apply_locked(self._engine.handle(message))
+
+    async def round_timer_loop(self, timeout_s: float) -> None:
+        """Background task: round-change if the height stalls for ``timeout_s``."""
+        while True:
+            start_height = self.height
+            await asyncio.sleep(timeout_s)
+            async with self._lock:
+                if self._engine is None:
+                    continue
+                stalled = self.height == start_height
+                waiting = (
+                    bool(self._pending)
+                    or bool(self._pending_changes)
+                    or self._engine.round > 0
+                    or self._engine.proposal is not None
+                )
+                if stalled and waiting and not self._engine.committed:
+                    log.info(
+                        "node=%s round timeout at height=%s round=%s",
+                        self.node_id, self._engine.height, self._engine.round,
+                    )
+                    await self._apply_locked(self._engine.on_timeout())
 
     # ── internal (lock held) ───────────────────────────────────────────
-    async def _maybe_propose_locked(self) -> None:
-        if not self._pending:
-            return
-        if not self._engine.is_proposer() or self._engine.phase != 0:
-            return
-        batch, self._pending = self._pending, []
-        log.info("node=%s proposing block height=%s txs=%d",
-                 self.node_id, self._engine.height, len(batch))
-        result = self._engine.propose(batch)
-        await self._apply_locked(result)
+    def _set_pending(self) -> StepResult | None:
+        if self._engine is None:
+            return None
+        return self._engine.set_pending(self._pending, self._pending_changes)
 
-    async def _apply_locked(self, result: StepResult) -> None:
-        for msg in result.broadcast:
-            await self.transport.broadcast(msg)
-        if result.committed is not None:
-            self._commit_locked(result.committed)
-            await self._maybe_propose_locked()
+    async def _apply_locked(self, result: StepResult | None) -> None:
+        while result is not None:
+            for msg in result.broadcast:
+                await self.transport.broadcast(msg)
+            if result.committed is None:
+                return
+            appended = self._commit_locked(result.committed)
+            if appended is not None:
+                await self.transport.gossip_block(appended.to_dict())
+            # A fresh engine may immediately propose the next height's items.
+            result = self._set_pending()
 
-    def _commit_locked(self, block: Block) -> None:
-        if not verify_finality(block, self.validators):
+    def _commit_locked(self, block: Block) -> Block | None:
+        if not verify_finality(block, self._active):
             log.warning("node=%s refusing block %s: invalid finality cert",
                         self.node_id, block.index)
-            return
-        self.repo.append(block)
-        log.info("node=%s committed block height=%s hash=%s",
-                 self.node_id, block.index, block.hash[:12])
+            self._engine = self._new_engine()
+            return None
+        round_ = self._engine.round if self._engine else 0
+        self._append_and_advance(block)
+        log.info("node=%s committed block height=%s round=%s hash=%s",
+                 self.node_id, block.index, round_, block.hash[:12])
         if self.on_commit is not None:
             self.on_commit(block)
+        return block
+
+    def _append_and_advance(self, block: Block) -> None:
+        """Persist ``block``, forget its committed items, advance the active
+        validator set by its changes, and rebuild the engine for the next height."""
+        self.repo.append(block)
+        self._forget_committed(block)
+        if block.validator_changes:
+            self._active = apply_changes(self._active, block.validator_changes)
+            log.info("node=%s validator set now size=%d quorum=%d after height %s",
+                     self.node_id, self._active.size, self._active.quorum, block.index)
         self._engine = self._new_engine()
+
+    def _forget_committed(self, block: Block) -> None:
+        """Drop a committed block's records and changes from local buffers (incl.
+        ones we never held), so they are never re-proposed or re-gossiped."""
+        committed_ids = {r.id for r in block.records}
+        self._pending = [r for r in self._pending if r.id not in committed_ids]
+        self._mempool_seen.update(committed_ids)
+        if block.validator_changes:
+            applied = set(block.validator_changes)
+            self._pending_changes = [
+                c for c in self._pending_changes if c not in applied
+            ]
+
+    async def _apply_pushed_block_locked(self, block: Block) -> None:
+        if block.index != self.repo.height() + 1:
+            return  # gap or stale; on-demand pull-sync handles larger gaps
+        if block.header.previous_hash != self.repo.latest().hash:  # type: ignore[union-attr]
+            return
+        if not verify_finality(block, self._active):
+            log.warning("node=%s rejecting pushed block %s: invalid finality",
+                        self.node_id, block.index)
+            return
+        self._append_and_advance(block)
+        log.info("node=%s applied pushed block height=%s", self.node_id, block.index)
+        if self.on_commit is not None:
+            self.on_commit(block)
+        await self._apply_locked(self._set_pending())
 
     async def _sync_locked(self, up_to: int) -> None:
         """Fetch and apply missing finalized blocks from peers up to ``up_to``."""
@@ -140,10 +289,9 @@ class Node:
                 log.warning("node=%s sync: block %s does not link; aborting",
                             self.node_id, want)
                 break
-            if not verify_finality(block, self.validators):
+            if not verify_finality(block, self._active):
                 log.warning("node=%s sync: block %s has invalid finality cert",
                             self.node_id, want)
                 break
-            self.repo.append(block)
-            self._engine = self._new_engine()
+            self._append_and_advance(block)
             log.info("node=%s synced block height=%s", self.node_id, want)

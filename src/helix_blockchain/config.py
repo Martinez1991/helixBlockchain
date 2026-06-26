@@ -7,9 +7,10 @@ sections, e.g. ``HELIX_ORION__HOST``. See ``.env.example`` for the full list.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from helix_blockchain.domain.crypto import PublicKey
 
@@ -58,11 +59,35 @@ class OrionSettings(BaseSettings):
     password: str = ""
     database: str = "orion"
     tls: bool = False
+    tls_ca_file: str = ""  # CA bundle verifying the MongoDB server certificate
     poll_interval: float = 5.0
 
 
+class TlsSettings(BaseSettings):
+    """TLS / mutual TLS for the validator peer-to-peer HTTP layer."""
+
+    enabled: bool = False
+    cert_file: str = ""  # this node's server certificate (PEM)
+    key_file: str = ""   # this node's private key (PEM)
+    ca_file: str = ""    # CA bundle used to verify peer certificates
+    mutual: bool = False  # require client certificates (mTLS)
+    # This node's client certificate for outbound mTLS; defaults to the server pair.
+    client_cert_file: str = ""
+    client_key_file: str = ""
+
+    @property
+    def effective_client_cert(self) -> str:
+        return self.client_cert_file or self.cert_file
+
+    @property
+    def effective_client_key(self) -> str:
+        return self.client_key_file or self.key_file
+
+
 class ConsensusSettings(BaseSettings):
-    peers: list[Peer] = Field(default_factory=list)
+    # NoDecode stops pydantic-settings from JSON-decoding the env value, so the
+    # validator below receives the raw "id@host:port|pubkey,..." string.
+    peers: Annotated[list[Peer], NoDecode] = Field(default_factory=list)
     bind_host: str = "0.0.0.0"
     bind_port: int = 8000
     block_interval: float = 5.0
@@ -91,7 +116,13 @@ class Settings(BaseSettings):
     orion: OrionSettings = Field(default_factory=OrionSettings)
     consensus: ConsensusSettings = Field(default_factory=ConsensusSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
+    tls: TlsSettings = Field(default_factory=TlsSettings)
     log_level: str = "INFO"
+    # Enables the /admin/submit test hook. Demo/testing only.
+    debug_api: bool = False
+    # Shared bearer token authenticating peer-to-peer endpoints (/consensus,
+    # /mempool, /block). When empty, authentication is disabled (dev only).
+    cluster_token: str = ""
 
 
 def load_settings() -> Settings:

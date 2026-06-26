@@ -19,6 +19,12 @@ class NullTransport:
     async def fetch_block(self, index):
         return None
 
+    async def gossip_records(self, records):
+        return None
+
+    async def gossip_block(self, block):
+        return None
+
 
 def build_single_node() -> Node:
     key = PrivateKey.generate()
@@ -56,6 +62,40 @@ def test_consensus_endpoint_rejects_malformed():
     client = TestClient(create_app(build_single_node()))
     resp = client.post("/consensus", json={"not": "a message"})
     assert resp.status_code == 400
+
+
+def test_consensus_endpoint_enqueues_valid_message():
+    from helix_blockchain.consensus.messages import ConsensusMessage, MessageType
+
+    node = build_single_node()
+    client = TestClient(create_app(node))
+    msg = ConsensusMessage.create(
+        type=MessageType.PREPARE,
+        height=1,
+        round=0,
+        block_hash="ab" * 32,
+        signer=node.private_key,
+    )
+    resp = client.post("/consensus", json=msg.to_dict())
+    assert resp.status_code == 200
+    # The handler returns immediately; the message is queued for the worker.
+    assert node._inbox.qsize() == 1
+
+
+def test_debug_submit_disabled_by_default():
+    client = TestClient(create_app(build_single_node()))
+    assert client.post("/admin/submit").status_code == 404
+
+
+def test_debug_submit_enabled_drives_a_commit():
+    node = build_single_node()  # N=1, quorum=1 -> commits on its own proposal
+    client = TestClient(create_app(node, debug_api=True))
+    resp = client.post("/admin/submit?count=2")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["submitted"] == 2 and body["height"] == 1
+    assert node.height == 1
+    assert len(node.repo.get(1).records) == 2
 
 
 def test_solo_node_commits_via_submit_then_serves_block():

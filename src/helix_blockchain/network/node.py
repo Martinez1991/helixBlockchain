@@ -28,9 +28,15 @@ from helix_blockchain.consensus.engine import (
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.block import Block, genesis_block
-from helix_blockchain.domain.crypto import PrivateKey
-from helix_blockchain.domain.membership import ValidatorChange, apply_changes
+from helix_blockchain.domain.crypto import PrivateKey, PublicKey
+from helix_blockchain.domain.membership import (
+    ChangeAction,
+    ValidatorChange,
+    apply_changes,
+    derive_validator_set,
+)
 from helix_blockchain.domain.records import IntegrityRecord
+from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.network.transport import Transport
 from helix_blockchain.storage.repository import BlockRepository
 
@@ -51,6 +57,7 @@ class Node:
         transport: Transport,
         now_ms: Callable[[], int],
         on_commit: CommitHook | None = None,
+        peer_registry: PeerRegistry | None = None,
     ) -> None:
         self.node_id = node_id
         self.private_key = private_key
@@ -60,6 +67,7 @@ class Node:
         self.transport = transport
         self.now_ms = now_ms
         self.on_commit = on_commit
+        self.peer_registry = peer_registry or PeerRegistry(self.me.to_hex())
 
         self._pending: list[IntegrityRecord] = []
         self._pending_changes: list[ValidatorChange] = []
@@ -74,12 +82,17 @@ class Node:
         self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue()
 
         if self.repo.height() < 0:
-            self.repo.append(genesis_block())
-        # Derive the active validator set by replaying committed membership changes.
-        self._active = self._genesis_validators
-        for block in self.repo.load_all():
-            if block.validator_changes:
-                self._active = apply_changes(self._active, block.validator_changes)
+            # Genesis embeds the initial validator set, making the chain
+            # self-describing.
+            self.repo.append(genesis_block(self._genesis_validators))
+        # Derive the active validator set purely from the chain: genesis carries
+        # an ADD per initial validator, later blocks carry the changes.
+        all_changes = [
+            change
+            for block in self.repo.load_all()
+            for change in block.validator_changes
+        ]
+        self._active = derive_validator_set(all_changes)
         self._engine = self._new_engine()
 
     # ── validator set ──────────────────────────────────────────────────
@@ -127,10 +140,38 @@ class Node:
         await self._ingest_records(records, gossip=False)
 
     async def submit_validator_change(self, change: ValidatorChange) -> None:
-        """Queue an add/remove of a validator to be committed in the next block."""
+        """Queue an add/remove of a validator, gossip it, and maybe propose."""
+        await self._ingest_changes([change], gossip=True)
+
+    async def receive_validator_changes(self, changes: list[ValidatorChange]) -> None:
+        """Apply validator changes gossiped by a peer (no re-gossip)."""
+        await self._ingest_changes(changes, gossip=False)
+
+    async def _ingest_changes(
+        self, changes: list[ValidatorChange], *, gossip: bool
+    ) -> None:
         async with self._lock:
-            self._pending_changes.append(change)
+            fresh = [
+                c for c in changes
+                if self._is_effective(c) and c not in self._pending_changes
+            ]
+            if not fresh:
+                return
+            self._pending_changes.extend(fresh)
+            if gossip:
+                await self.transport.gossip_changes([c.to_dict() for c in fresh])
             await self._apply_locked(self._set_pending())
+
+    def _is_effective(self, change: ValidatorChange) -> bool:
+        """A change is effective only if it actually alters the active set, so
+        no-ops (add-existing / remove-absent) never spawn pointless blocks."""
+        try:
+            present = self._active.contains(PublicKey.from_hex(change.validator))
+        except ValueError:
+            return False
+        if change.action is ChangeAction.ADD:
+            return not present
+        return present
 
     async def _ingest_records(
         self, records: list[IntegrityRecord], *, gossip: bool
@@ -185,6 +226,24 @@ class Node:
             if self._engine is None or message.height != self._engine.height:
                 return  # follower, or stale/future after sync; ignore
             await self._apply_locked(self._engine.handle(message))
+
+    async def discovery_loop(self, interval_s: float) -> None:
+        """Announce ourselves and pull peers' registries to learn new addresses."""
+        while True:
+            try:
+                await self._announce_self()
+                discovered = await self.transport.fetch_peers()
+                added = self.peer_registry.merge(discovered) if discovered else 0
+                if added:
+                    log.info("node=%s discovered %d new peer(s)", self.node_id, added)
+            except Exception:  # noqa: BLE001 — discovery is best-effort
+                log.exception("node=%s discovery iteration failed", self.node_id)
+            await asyncio.sleep(interval_s)
+
+    async def _announce_self(self) -> None:
+        specs = self.peer_registry.specs()
+        if specs:
+            await self.transport.announce(specs)
 
     async def round_timer_loop(self, timeout_s: float) -> None:
         """Background task: round-change if the height stalls for ``timeout_s``."""

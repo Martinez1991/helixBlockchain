@@ -25,6 +25,7 @@ import httpx
 from helix_blockchain.config import Peer, TlsSettings
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
+from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.tls import httpx_tls_kwargs, scheme
 
 
@@ -38,13 +39,24 @@ class Transport(Protocol):
     async def gossip_records(self, records: list[dict[str, Any]]) -> None:
         """Share newly observed integrity records with every peer."""
 
+    async def gossip_changes(self, changes: list[dict[str, Any]]) -> None:
+        """Share pending validator-set changes with every peer."""
+
     async def gossip_block(self, block: dict[str, Any]) -> None:
         """Push a finalized block to every peer."""
+
+    async def fetch_peers(self) -> list[Peer]:
+        """Pull peers' registries for discovery (empty if not supported)."""
+
+    async def announce(self, specs: list[str]) -> None:
+        """Announce peer specs (including our own) to every peer."""
 
 
 _MessageHandler = Callable[[ConsensusMessage], Awaitable[None]]
 _BlockGetter = Callable[[int], Awaitable[Block | None]]
-_RecordsHandler = Callable[[list[dict[str, Any]]], Awaitable[None]]
+_PayloadHandler = Callable[[list[dict[str, Any]]], Awaitable[None]]
+_RecordsHandler = _PayloadHandler
+_ChangesHandler = _PayloadHandler
 _BlockHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -61,6 +73,7 @@ class InMemoryNetwork:
         self._handlers: dict[str, _MessageHandler] = {}
         self._getters: dict[str, _BlockGetter] = {}
         self._record_handlers: dict[str, _RecordsHandler] = {}
+        self._change_handlers: dict[str, _ChangesHandler] = {}
         self._block_handlers: dict[str, _BlockHandler] = {}
         self.partitioned: set[str] = set()
         # Each item is (kind, sender_id, payload).
@@ -73,6 +86,7 @@ class InMemoryNetwork:
         get_block: _BlockGetter,
         on_records: _RecordsHandler | None = None,
         on_block: _BlockHandler | None = None,
+        on_changes: _ChangesHandler | None = None,
     ) -> InMemoryTransport:
         self._handlers[node_id] = on_message
         self._getters[node_id] = get_block
@@ -80,6 +94,8 @@ class InMemoryNetwork:
             self._record_handlers[node_id] = on_records
         if on_block is not None:
             self._block_handlers[node_id] = on_block
+        if on_changes is not None:
+            self._change_handlers[node_id] = on_changes
         return InMemoryTransport(self, node_id)
 
     def _enqueue(self, kind: str, sender_id: str, payload: Any) -> None:
@@ -103,6 +119,7 @@ class InMemoryNetwork:
         handlers_by_kind = {
             "msg": self._handlers,
             "records": self._record_handlers,
+            "changes": self._change_handlers,
             "block": self._block_handlers,
         }
         while self._queue:
@@ -132,8 +149,17 @@ class InMemoryTransport:
     async def gossip_records(self, records: list[dict[str, Any]]) -> None:
         self._network._enqueue("records", self.self_id, records)
 
+    async def gossip_changes(self, changes: list[dict[str, Any]]) -> None:
+        self._network._enqueue("changes", self.self_id, changes)
+
     async def gossip_block(self, block: dict[str, Any]) -> None:
         self._network._enqueue("block", self.self_id, block)
+
+    async def fetch_peers(self) -> list[Peer]:
+        return []  # in-process tests wire handlers directly; no discovery needed
+
+    async def announce(self, specs: list[str]) -> None:
+        return None
 
 
 class HttpTransport:
@@ -141,12 +167,12 @@ class HttpTransport:
 
     def __init__(
         self,
-        peers: list[Peer],
+        registry: PeerRegistry,
         timeout: float = 3.0,
         cluster_token: str = "",
         tls: TlsSettings | None = None,
     ) -> None:
-        self._peers = peers
+        self._registry = registry
         self._scheme = scheme(tls) if tls else "http"
         headers = {"Authorization": f"Bearer {cluster_token}"} if cluster_token else None
         self._client = httpx.AsyncClient(
@@ -162,8 +188,9 @@ class HttpTransport:
             with contextlib.suppress(httpx.HTTPError):
                 await self._client.post(self._url(peer, path), json=payload)
 
-        # Concurrent so one slow/down peer doesn't delay delivery to the others.
-        await asyncio.gather(*(_post(p) for p in self._peers))
+        # Peers come from the dynamic registry, so newly discovered validators
+        # are reached without a restart. Concurrent so one slow peer can't stall.
+        await asyncio.gather(*(_post(p) for p in self._registry.current()))
 
     async def broadcast(self, message: ConsensusMessage) -> None:
         await self._post_all("/consensus", message.to_dict())
@@ -171,11 +198,14 @@ class HttpTransport:
     async def gossip_records(self, records: list[dict[str, Any]]) -> None:
         await self._post_all("/mempool", {"records": records})
 
+    async def gossip_changes(self, changes: list[dict[str, Any]]) -> None:
+        await self._post_all("/membership", {"changes": changes})
+
     async def gossip_block(self, block: dict[str, Any]) -> None:
         await self._post_all("/block", block)
 
     async def fetch_block(self, index: int) -> Block | None:
-        for peer in self._peers:
+        for peer in self._registry.current():
             try:
                 resp = await self._client.get(self._url(peer, f"/blocks/{index}"))
                 if resp.status_code == 200:
@@ -183,6 +213,22 @@ class HttpTransport:
             except httpx.HTTPError:
                 continue
         return None
+
+    async def fetch_peers(self) -> list[Peer]:
+        discovered: list[Peer] = []
+        for peer in self._registry.current():
+            try:
+                resp = await self._client.get(self._url(peer, "/peers"))
+                if resp.status_code == 200:
+                    for spec in resp.json().get("peers", []):
+                        with contextlib.suppress(ValueError):
+                            discovered.append(Peer.parse(spec))
+            except httpx.HTTPError:
+                continue
+        return discovered
+
+    async def announce(self, specs: list[str]) -> None:
+        await self._post_all("/peers", {"peers": specs})
 
     async def aclose(self) -> None:
         await self._client.aclose()

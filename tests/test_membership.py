@@ -5,12 +5,13 @@ from __future__ import annotations
 import pytest
 
 from helix_blockchain.consensus.validator_set import ValidatorSet
-from helix_blockchain.domain.block import Block
+from helix_blockchain.domain.block import Block, genesis_block
 from helix_blockchain.domain.crypto import PrivateKey
 from helix_blockchain.domain.membership import (
     ChangeAction,
     ValidatorChange,
     apply_changes,
+    derive_validator_set,
 )
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
@@ -75,6 +76,32 @@ def test_block_validator_changes_roundtrip():
     assert restored.hash == block.hash
 
 
+# ── self-describing genesis ────────────────────────────────────────────
+def test_genesis_embeds_validator_set():
+    keys = [PrivateKey.generate().public for _ in range(3)]
+    vs = ValidatorSet(keys)
+    genesis = genesis_block(vs)
+    assert genesis.index == 0
+    assert genesis.has_consistent_merkle_root()
+    assert all(c.action is ChangeAction.ADD for c in genesis.validator_changes)
+    # The set is recoverable purely from the genesis block's changes.
+    derived = derive_validator_set(genesis.validator_changes)
+    assert {v.to_hex() for v in derived} == {k.to_hex() for k in keys}
+
+
+def test_genesis_hash_depends_on_validator_set():
+    a = ValidatorSet([PrivateKey.generate().public for _ in range(3)])
+    b = ValidatorSet([PrivateKey.generate().public for _ in range(3)])
+    assert genesis_block(a).hash != genesis_block(b).hash
+    # Same set -> identical genesis across nodes (deterministic ordering).
+    assert genesis_block(a).hash == genesis_block(a).hash
+
+
+def test_empty_genesis_still_supported():
+    # Domain Blockchain tests construct a genesis with no embedded set.
+    assert genesis_block().validator_changes == []
+
+
 # ── node-level ─────────────────────────────────────────────────────────
 class Cluster:
     def __init__(self, n: int):
@@ -93,6 +120,7 @@ class Cluster:
                 node.node_id, node.on_message, lambda idx, r=repo: _aget(r, idx),
                 _records_handler(node),
                 lambda payload, nd=node: nd.ingest_block(Block.from_dict(payload)),
+                _changes_handler(node),
             )
             self.nodes[node.node_id] = node
 
@@ -107,6 +135,14 @@ class Cluster:
 def _records_handler(node: Node):
     async def handle(payloads):
         await node.receive_records([IntegrityRecord.from_dict(p) for p in payloads])
+    return handle
+
+
+def _changes_handler(node: Node):
+    async def handle(payloads):
+        await node.receive_validator_changes(
+            [ValidatorChange.from_dict(p) for p in payloads]
+        )
     return handle
 
 
@@ -153,6 +189,35 @@ async def test_shrunken_cluster_keeps_committing_without_removed_node():
 
     assert all(n.height == 2 for n in remaining)
     assert len({n.repo.get(2).hash for n in remaining}) == 1
+
+
+async def test_change_submitted_to_non_proposer_is_gossiped_and_committed():
+    cluster = Cluster(4)
+    proposer = cluster.proposer(1, 0)
+    # Submit the change to a node that is NOT the height-1 proposer.
+    submitter = next(n for n in cluster.nodes.values() if n is not proposer)
+    victim = next(
+        n for n in cluster.nodes.values() if n not in (proposer, submitter)
+    )
+    await submitter.submit_validator_change(
+        ValidatorChange(ChangeAction.REMOVE, victim.private_key.public.to_hex())
+    )
+    await cluster.network.run_until_idle()
+
+    # Gossip carried the change to the proposer, which committed it.
+    assert all(n.height == 1 for n in cluster.nodes.values())
+    assert victim.is_validator is False
+    assert all(n.validators.size == 3 for n in cluster.nodes.values())
+
+
+async def test_noop_change_is_ignored():
+    cluster = Cluster(3)
+    proposer = cluster.proposer(1, 0)
+    existing = next(iter(cluster.nodes.values())).private_key.public.to_hex()
+    # Adding an already-present validator is a no-op: nothing should be proposed.
+    await proposer.submit_validator_change(ValidatorChange(ChangeAction.ADD, existing))
+    await cluster.network.run_until_idle()
+    assert all(n.height == 0 for n in cluster.nodes.values())
 
 
 async def test_removed_validator_can_be_added_back():

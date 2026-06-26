@@ -4,7 +4,9 @@ Endpoints:
 
 * ``POST /consensus`` — receive a consensus message from a peer.
 * ``POST /mempool`` — receive integrity records gossiped by a peer.
+* ``POST /membership`` — receive validator-set changes gossiped by a peer.
 * ``POST /block`` — receive a finalized block pushed by a peer.
+* ``GET  /peers`` / ``POST /peers`` — exchange the peer registry (discovery).
 * ``GET  /blocks/{index}`` — serve a finalized block (used for catch-up sync).
 * ``GET  /chain`` — chain height + latest hash.
 * ``GET  /health`` — liveness probe.
@@ -26,6 +28,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 
+from helix_blockchain.config import Peer
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
 from helix_blockchain.domain.membership import ValidatorChange
@@ -72,6 +75,17 @@ def create_app(
         await node.receive_records(records)
         return {"status": "accepted"}
 
+    @app.post("/membership", dependencies=auth)
+    async def membership(payload: dict[str, Any]) -> dict[str, str]:
+        try:
+            changes = [ValidatorChange.from_dict(c) for c in payload["changes"]]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"malformed changes: {exc}"
+            ) from exc
+        await node.receive_validator_changes(changes)
+        return {"status": "accepted"}
+
     @app.post("/block", dependencies=auth)
     async def push_block(payload: dict[str, Any]) -> dict[str, str]:
         try:
@@ -82,6 +96,21 @@ def create_app(
             ) from exc
         await node.ingest_block(block)
         return {"status": "accepted"}
+
+    @app.get("/peers", dependencies=auth)
+    async def get_peers() -> dict[str, Any]:
+        return {"peers": node.peer_registry.specs()}
+
+    @app.post("/peers", dependencies=auth)
+    async def post_peers(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            peers = [Peer.parse(s) for s in payload["peers"]]
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"malformed peers: {exc}"
+            ) from exc
+        added = node.peer_registry.merge(peers)
+        return {"added": added}
 
     @app.get("/blocks/{index}")
     async def get_block(index: int) -> dict[str, Any]:

@@ -18,9 +18,10 @@ import uvicorn
 from helix_blockchain.clock import now_ms
 from helix_blockchain.collectors.integrity import IntegrityChecker, RecordDeduper
 from helix_blockchain.collectors.orion import MongoOrionGateway
-from helix_blockchain.config import Settings, load_settings
+from helix_blockchain.config import Peer, Settings, load_settings
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.crypto import PrivateKey
+from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.network.node import Node
 from helix_blockchain.network.server import create_app
 from helix_blockchain.network.transport import HttpTransport
@@ -38,6 +39,20 @@ def configure_logging(level: str) -> None:
     )
 
 
+def _advertise_peer(settings: Settings, private_key: PrivateKey) -> Peer | None:
+    """This node's own peer entry from HELIX_CONSENSUS__ADVERTISE, for discovery."""
+    advertise = settings.consensus.advertise
+    if not advertise:
+        return None
+    host, port = advertise.rsplit(":", 1)
+    return Peer(
+        node_id=settings.node.node_id,
+        host=host,
+        port=int(port),
+        public_key=private_key.public,
+    )
+
+
 def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
     if not settings.node.private_key_hex:
         raise SystemExit(
@@ -48,9 +63,14 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
     validators = ValidatorSet(
         [private_key.public, *(p.public_key for p in settings.consensus.peers)]
     )
+    registry = PeerRegistry(
+        private_key.public.to_hex(),
+        self_peer=_advertise_peer(settings, private_key),
+    )
+    registry.seed(settings.consensus.peers)
     repo = SqlBlockRepository(settings.storage.url)
     transport = HttpTransport(
-        settings.consensus.peers,
+        registry,
         cluster_token=settings.cluster_token,
         tls=settings.tls,
     )
@@ -63,6 +83,7 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         transport=transport,
         now_ms=now_ms,
         on_commit=notifier.block_committed,
+        peer_registry=registry,
     )
     log.info(
         "node %s ready: %d validators, quorum %d, tip height %d",
@@ -111,6 +132,7 @@ async def run(settings: Settings) -> None:
             node.inbound_worker(),
             monitor_loop(node, settings),
             node.round_timer_loop(round_timeout),
+            node.discovery_loop(max(5.0, settings.consensus.block_interval * 2)),
         )
     finally:
         await transport.aclose()

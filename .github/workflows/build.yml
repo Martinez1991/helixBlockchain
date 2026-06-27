@@ -30,6 +30,33 @@ jobs:
           name: coverage
           path: coverage.xml
 
+  test-postgres:
+    name: Storage tests on Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: helix
+          POSTGRES_PASSWORD: helix
+          POSTGRES_DB: helix
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install (with Postgres driver)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,postgres]"
+      - name: Storage + journal tests on Postgres
+        env:
+          HELIX_TEST_DB_URL: postgresql+psycopg://helix:helix@localhost:5432/helix
+        run: pytest tests/test_postgres.py -v
+
   sonar:
     name: SonarQube
     runs-on: ubuntu-latest

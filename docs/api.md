@@ -41,6 +41,12 @@ Specs de peers conhecidos (registro de descoberta). *Autenticado.*
 ### `GET /metrics`
 Métricas no formato Prometheus (ver [observability.md](observability.md)).
 
+### `GET /ui`
+**Console web read-only** (SPA): board do cluster (altura/round/lag/validadores
+por nó), explorer de blocos com drill-down de registros, feed de adulterações e
+**verificador de prova de Merkle no navegador**. Consome apenas os endpoints de
+leitura; consulta nós irmãos via CORS. Complementa (não substitui) o Grafana.
+
 ### `GET /proof/{height}/{index}`
 **Prova de inclusão Merkle** de `records[index]` no bloco `height` — verificável
 **offline** contra a raiz de Merkle, sem confiar no nó:

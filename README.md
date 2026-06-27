@@ -84,6 +84,10 @@ curl -s -H "Authorization: Bearer $TOKEN" -X POST localhost:8001/admin/submit?co
 curl -s localhost:8001/chain          # height/quorum/validadores (leitura, aberto)
 ```
 
+**Console web** (read-only): abra **http://localhost:8001/ui** — board do cluster,
+explorer de blocos, feed de adulterações e verificador de prova de Merkle no
+navegador. (Para métricas/alertas, use Grafana + Prometheus em [`ops/`](ops/).)
+
 ## Início rápido (local)
 
 ```bash

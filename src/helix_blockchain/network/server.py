@@ -54,7 +54,7 @@ def create_app(
     rate_limit_burst: int = 200,
     max_body_bytes: int = 1_048_576,
 ) -> FastAPI:
-    app = FastAPI(title="Helix Blockchain Node", version="0.2.0")
+    app = FastAPI(title="Helix Blockchain Node", version="0.3.0")
     limiter = RateLimiter(rate_limit_rps, rate_limit_burst)
 
     @app.middleware("http")

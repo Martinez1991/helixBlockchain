@@ -25,6 +25,7 @@ from helix_blockchain.consensus.engine import (
     StepResult,
     verify_finality,
 )
+from helix_blockchain.consensus.journal import ConsensusJournalStore, NullJournalStore
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.block import Block, genesis_block
@@ -58,6 +59,7 @@ class Node:
         now_ms: Callable[[], int],
         on_commit: CommitHook | None = None,
         peer_registry: PeerRegistry | None = None,
+        journal_store: ConsensusJournalStore | None = None,
     ) -> None:
         self.node_id = node_id
         self.private_key = private_key
@@ -68,6 +70,8 @@ class Node:
         self.now_ms = now_ms
         self.on_commit = on_commit
         self.peer_registry = peer_registry or PeerRegistry(self.me.to_hex())
+        # Durable write-ahead journal of consensus votes for crash-recovery.
+        self._journal_store = journal_store or NullJournalStore()
 
         self._pending: list[IntegrityRecord] = []
         self._pending_changes: list[ValidatorChange] = []
@@ -108,12 +112,14 @@ class Node:
         assert latest is not None
         if not self._active.contains(self.me):
             return None
+        height = latest.index + 1
         return ConsensusEngine(
             validators=self._active,
             private_key=self.private_key,
-            height=latest.index + 1,
+            height=height,
             previous_hash=latest.hash,
             now_ms=self.now_ms,
+            journal=self._journal_store.view(height),
         )
 
     @property
@@ -304,6 +310,8 @@ class Node:
         validator set by its changes, and rebuild the engine for the next height."""
         self.repo.append(block)
         self._forget_committed(block)
+        # The block is finalized: its height's vote journal is no longer needed.
+        self._journal_store.prune_below(block.index + 1)
         if block.validator_changes:
             self._active = apply_changes(self._active, block.validator_changes)
             log.info("node=%s validator set now size=%d quorum=%d after height %s",

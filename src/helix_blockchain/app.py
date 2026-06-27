@@ -19,6 +19,7 @@ from helix_blockchain.clock import now_ms
 from helix_blockchain.collectors.integrity import IntegrityChecker, RecordDeduper
 from helix_blockchain.collectors.orion import MongoOrionGateway
 from helix_blockchain.config import Peer, Settings, load_settings
+from helix_blockchain.consensus.journal import SqlConsensusJournalStore
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.crypto import PrivateKey
 from helix_blockchain.network.discovery import PeerRegistry
@@ -69,6 +70,7 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
     )
     registry.seed(settings.consensus.peers)
     repo = SqlBlockRepository(settings.storage.url)
+    journal_store = SqlConsensusJournalStore(settings.storage.url)
     transport = HttpTransport(
         registry,
         cluster_token=settings.cluster_token,
@@ -84,6 +86,7 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         now_ms=now_ms,
         on_commit=notifier.block_committed,
         peer_registry=registry,
+        journal_store=journal_store,
     )
     log.info(
         "node %s ready: %d validators, quorum %d, tip height %d",

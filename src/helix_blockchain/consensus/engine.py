@@ -28,6 +28,12 @@ import enum
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from helix_blockchain.consensus.journal import (
+    COMMIT,
+    PREPARE,
+    NullVoteJournal,
+    VoteJournal,
+)
 from helix_blockchain.consensus.messages import ConsensusMessage, MessageType
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.block import ZERO_HASH, Block
@@ -65,6 +71,7 @@ class ConsensusEngine:
         height: int,
         previous_hash: str,
         now_ms: Callable[[], int],
+        journal: VoteJournal | None = None,
     ) -> None:
         if not validators.contains(private_key.public):
             raise ValueError("this node is not part of the validator set")
@@ -74,6 +81,8 @@ class ConsensusEngine:
         self.height = height
         self.previous_hash = previous_hash
         self._now_ms = now_ms
+        # Durable record of our own votes, so a restart cannot equivocate.
+        self._journal = journal or NullVoteJournal()
 
         self._pending: list[IntegrityRecord] = []
         self._pending_changes: list[ValidatorChange] = []
@@ -81,6 +90,10 @@ class ConsensusEngine:
         self.prepared_round: int | None = None
         self.prepared_block: Block | None = None
         self._prepared_cert: list[ConsensusMessage] = []
+        # Restore the prepared lock from the journal (crash-recovery).
+        restored = self._journal.prepared()
+        if restored is not None:
+            self.prepared_round, self.prepared_block, self._prepared_cert = restored
         # Round-change messages seen, keyed by target round then sender.
         self._round_changes: dict[int, dict[str, ConsensusMessage]] = {}
         self._rc_sent: set[int] = set()
@@ -243,8 +256,14 @@ class ConsensusEngine:
         return True  # nothing locked anywhere: proposer may pick a fresh block
 
     def _accept_proposal(self, block: Block, result: StepResult) -> None:
+        # Crash-recovery guard: never PREPARE a block that contradicts a vote we
+        # already journaled for this round (would be equivocation).
+        prior = self._journal.voted_hash(self.round, PREPARE)
+        if prior is not None and prior != block.hash:
+            return
         self.proposal = block
         self.phase = Phase.PRE_PREPARED
+        self._journal.record_vote(self.round, PREPARE, block.hash)
         prepare = ConsensusMessage.create(
             type=MessageType.PREPARE,
             height=self.height,
@@ -286,10 +305,16 @@ class ConsensusEngine:
         quorum = self.validators.quorum
 
         if self.phase == Phase.PRE_PREPARED and len(self._prepares.get(h, {})) >= quorum:
+            # Crash-recovery guard: never COMMIT a block contradicting a journaled commit.
+            prior = self._journal.voted_hash(self.round, COMMIT)
+            if prior is not None and prior != h:
+                return
             self.phase = Phase.PREPARED
             self.prepared_round = self.round
             self.prepared_block = self.proposal
             self._prepared_cert = list(self._prepares[h].values())
+            self._journal.record_prepared(self.round, self.proposal, self._prepared_cert)
+            self._journal.record_vote(self.round, COMMIT, h)
             commit = ConsensusMessage.create(
                 type=MessageType.COMMIT,
                 height=self.height,

@@ -1,0 +1,58 @@
+{
+  "title": "Helix Blockchain",
+  "uid": "helix-blockchain",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "10s",
+  "tags": ["helix", "blockchain", "bft"],
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Chain height per node",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [{"expr": "helix_chain_height", "legendFormat": "{{instance}}"}]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Blocks committed (rate/5m)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [{"expr": "increase(helix_blocks_committed_total[5m])", "legendFormat": "{{instance}}"}]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Active validators / quorum",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "max(helix_validators_active)", "legendFormat": "validators"},
+        {"expr": "max(helix_quorum)", "legendFormat": "quorum"}
+      ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Tampering detected (total)",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+      "fieldConfig": {"defaults": {"thresholds": {"steps": [
+        {"color": "green", "value": 0}, {"color": "red", "value": 1}]}}},
+      "targets": [{"expr": "max(helix_tampering_detected_total)"}]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Consensus round",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [{"expr": "helix_consensus_round", "legendFormat": "{{instance}}"}]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Round-change timeouts (rate/10m)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [{"expr": "increase(helix_round_timeouts_total[10m])", "legendFormat": "{{instance}}"}]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Mempool pending & inbound queue",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {"expr": "helix_mempool_pending_records", "legendFormat": "pending {{instance}}"},
+        {"expr": "helix_inbound_queue_depth", "legendFormat": "inbound {{instance}}"}
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Records dropped (rate/10m)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [{"expr": "increase(helix_records_dropped_total[10m])", "legendFormat": "{{instance}}"}]
+    }
+  ]
+}

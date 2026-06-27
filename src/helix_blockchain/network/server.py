@@ -26,8 +26,9 @@ from __future__ import annotations
 import hmac
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 
+from helix_blockchain import metrics
 from helix_blockchain.config import Peer
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
@@ -135,6 +136,11 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    async def prometheus_metrics() -> Response:
+        body, content_type = metrics.render()
+        return Response(content=body, media_type=content_type)
 
     if debug_api:
 

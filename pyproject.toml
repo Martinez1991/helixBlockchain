@@ -22,6 +22,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "structlog>=24.1",
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

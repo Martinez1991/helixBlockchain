@@ -1,0 +1,53 @@
+# Prometheus alerting rules for the Helix Blockchain validators.
+# Load via prometheus.yml: rule_files: ["alerts.yml"]
+groups:
+  - name: helix-blockchain
+    rules:
+      - alert: HelixChainStalled
+        # The chain height has not advanced on any scraped node for 5 minutes,
+        # while work is pending — a liveness failure.
+        expr: (max(increase(helix_chain_height[5m])) == 0) and (max(helix_mempool_pending_records) > 0)
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Helix chain stalled (no new blocks in 5m with pending records)"
+
+      - alert: HelixRoundChangeStorm
+        # Frequent round-change timeouts indicate a faulty proposer or partition.
+        expr: increase(helix_round_timeouts_total[10m]) > 5
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "Frequent round-change timeouts on {{ $labels.instance }}"
+
+      - alert: HelixNodeLagging
+        # A node's height trails the cluster max by more than 2 blocks.
+        expr: (max(helix_chain_height) - helix_chain_height) > 2
+        for: 3m
+        labels: { severity: warning }
+        annotations:
+          summary: "Node {{ $labels.instance }} is lagging the cluster"
+
+      - alert: HelixTamperingDetected
+        # Any newly committed tampering event — surface immediately.
+        expr: increase(helix_tampering_detected_total[5m]) > 0
+        for: 0m
+        labels: { severity: critical }
+        annotations:
+          summary: "Tampering committed on the chain ({{ $value }} record(s) in 5m)"
+
+      - alert: HelixInboundBacklog
+        # The inbound consensus queue is backing up (processing can't keep up).
+        expr: helix_inbound_queue_depth > 500
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "Inbound consensus queue backing up on {{ $labels.instance }}"
+
+      - alert: HelixRecordsDropped
+        # Many records dropped → possible injection attempts or misconfig.
+        expr: increase(helix_records_dropped_total[10m]) > 10
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Unsigned/invalid records being dropped on {{ $labels.instance }}"

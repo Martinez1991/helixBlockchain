@@ -20,6 +20,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 
+from helix_blockchain import metrics
 from helix_blockchain.consensus.engine import (
     ConsensusEngine,
     StepResult,
@@ -36,7 +37,7 @@ from helix_blockchain.domain.membership import (
     apply_changes,
     derive_validator_set,
 )
-from helix_blockchain.domain.records import IntegrityRecord
+from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.network.transport import Transport
 from helix_blockchain.storage.repository import BlockRepository
@@ -193,6 +194,7 @@ class Node:
                 else:
                     log.warning("node=%s dropping unsigned/invalid record for %s",
                                 self.node_id, r.entity_id)
+            metrics.observe_records_dropped(len(records) - len(authentic))
             fresh = [r for r in authentic if r.content_key not in self._mempool_seen]
             if not fresh:
                 return
@@ -221,6 +223,7 @@ class Node:
     def enqueue_inbound(self, message: ConsensusMessage) -> None:
         """Queue a peer message for the worker (called from the HTTP handler)."""
         self._inbox.put_nowait(message)
+        metrics.observe_inbound(self._inbox.qsize())
 
     async def inbound_worker(self) -> None:
         """Process queued inbound messages serially, off the HTTP request path."""
@@ -281,7 +284,9 @@ class Node:
                         "node=%s round timeout at height=%s round=%s",
                         self.node_id, self._engine.height, self._engine.round,
                     )
+                    metrics.observe_timeout()
                     await self._apply_locked(self._engine.on_timeout())
+                    metrics.observe_round(self._engine.round if self._engine else 0)
 
     # ── internal (lock held) ───────────────────────────────────────────
     def _set_pending(self) -> StepResult | None:
@@ -327,6 +332,13 @@ class Node:
             log.info("node=%s validator set now size=%d quorum=%d after height %s",
                      self.node_id, self._active.size, self._active.quorum, block.index)
         self._engine = self._new_engine()
+        tampered = sum(1 for r in block.records if r.verdict is Verdict.TAMPERED)
+        metrics.observe_commit(tampered)
+        metrics.observe_chain_state(
+            height=self.height, validators=self._active.size,
+            quorum=self._active.quorum, is_validator=self.is_validator,
+            pending=len(self._pending),
+        )
 
     def _forget_committed(self, block: Block) -> None:
         """Drop a committed block's records and changes from local buffers (incl.

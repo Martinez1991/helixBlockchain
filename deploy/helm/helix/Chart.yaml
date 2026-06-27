@@ -1,0 +1,8 @@
+apiVersion: v2
+name: helix-blockchain
+description: Permissioned BFT integrity ledger for FIWARE Orion (HA validator set)
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+keywords: [blockchain, bft, iot, fiware, integrity]
+home: https://github.com/Martinez1991/helixBlockchain

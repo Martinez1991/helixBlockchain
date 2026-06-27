@@ -69,9 +69,12 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport, WebhookNotifier
         )
     private_key = PrivateKey.from_hex(private_key_hex)
     cluster_token = settings.resolved_cluster_token()
-    validators = ValidatorSet(
-        [private_key.public, *(p.public_key for p in settings.consensus.peers)]
-    )
+    # Dedup by public key so a peer list that includes this node (common in k8s,
+    # where every pod gets the same full list) is tolerated.
+    keys = {private_key.public.to_hex(): private_key.public}
+    for p in settings.consensus.peers:
+        keys[p.public_key.to_hex()] = p.public_key
+    validators = ValidatorSet(list(keys.values()))
     registry = PeerRegistry(
         private_key.public.to_hex(),
         self_peer=_advertise_peer(settings, private_key),

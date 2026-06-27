@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "helix.fullname" . }}
+  labels: {{- include "helix.labels" . | nindent 4 }}
+spec:
+  clusterIP: None              # headless: stable per-pod DNS (helix-0, helix-1, ...)
+  selector: {{- include "helix.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: http, port: 8000, targetPort: http }

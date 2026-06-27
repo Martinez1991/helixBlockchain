@@ -72,3 +72,20 @@ def test_rotation_rejects_unknown_token():
     client = _client("new-token,old-token")
     r = client.post("/admin/submit", headers={"Authorization": "Bearer nope"})
     assert r.status_code == 401
+
+
+def test_build_node_tolerates_self_in_peers(monkeypatch):
+    # k8s gives every pod the same full peer list (including itself).
+    from helix_blockchain import app
+    from helix_blockchain.config import Peer
+
+    k = PrivateKey.generate()
+    other = PrivateKey.generate().public
+    settings = Settings(
+        node={"private_key_hex": k.to_hex()},
+        storage={"url": "sqlite:///:memory:"},
+    )
+    settings.consensus.peers = [Peer("self", "h", 8000, k.public),
+                                Peer("other", "h2", 8000, other)]
+    node, _transport, _wh = app.build_node(settings)
+    assert node.validators.size == 2  # self deduped against the peer entry

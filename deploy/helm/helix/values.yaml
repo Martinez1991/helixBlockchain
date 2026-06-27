@@ -1,0 +1,54 @@
+# Helix Blockchain validator set (HA via StatefulSet).
+#
+# Each pod gets a stable identity (helix-0..N) and its own private key, selected
+# by ordinal from a Secret. Provide N keypairs and the matching peers list below.
+
+image:
+  repository: ghcr.io/martinez1991/helixblockchain
+  tag: "0.2.0"
+  pullPolicy: IfNotPresent
+
+# Number of validators. Use 4+ for Byzantine fault tolerance (f=1).
+replicas: 4
+
+storage:
+  url: "sqlite:////app/data/chain.db"
+  size: 5Gi
+  storageClassName: ""
+
+orion:
+  host: orion
+  port: 27017
+  database: orion
+  useChangeStreams: false
+
+# Peers list (same on every pod; the node dedups itself). One entry per ordinal:
+#   "helix-<ordinal>@helix-<ordinal>.<svc>:8000|<pubkey-hex>"
+peers: []
+
+# Secrets — provide via `--set-file` or an external SealedSecret/Vault, NOT here.
+# secret.privateKeys: map ordinal->hex; secret.clusterToken: shared bearer token.
+secret:
+  create: false          # set true only for quick tests with inline values
+  name: helix-secrets
+  clusterToken: ""
+  privateKeys: {}        # { "0": "<hex>", "1": "<hex>", ... }
+
+tls:
+  enabled: false
+
+resources:
+  requests: { cpu: "100m", memory: "128Mi" }
+  limits:   { cpu: "500m", memory: "512Mi" }
+
+# HA: spread validators across nodes/zones and bound voluntary disruptions.
+podAntiAffinity: soft     # soft | hard
+pdb:
+  enabled: true
+  maxUnavailable: 1
+
+serviceMonitor:
+  enabled: false          # set true if the Prometheus Operator is installed
+
+logLevel: INFO
+debugApi: false

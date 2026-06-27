@@ -9,7 +9,7 @@
 > Helm HA (#14), spec TLA+ + fuzzing (#15), bootstrap de genesis (#16) e trilha
 > de auditoria + dossiê LGPD (#17). Detalhes operacionais em
 > [operations.md](operations.md), segurança/compliance em
-> [compliance/](compliance/), verificação formal em [../specs/](../specs/).
+> [compliance/](compliance/lgpd.md), verificação formal em [../specs/](https://github.com/Martinez1991/helixBlockchain/tree/master/specs).
 
 ## Visão geral
 

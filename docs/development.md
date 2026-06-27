@@ -61,9 +61,9 @@ docker compose up --build           # Mongo + Orion + 3 validadores
 ## Verificação formal e fuzzing
 
 `specs/Helix.tla` (TLA+, safety) e `tests/test_fuzz_consensus.py` (Hypothesis).
-Ver [../specs/README.md](../specs/README.md).
+Ver [../specs/README.md](https://github.com/Martinez1991/helixBlockchain/blob/master/specs/README.md).
 
 ## Contribuindo
 
-Ver [../CONTRIBUTING.md](../CONTRIBUTING.md). PRs disparam CI (testes+lint,
+Ver [../CONTRIBUTING.md](https://github.com/Martinez1991/helixBlockchain/blob/master/CONTRIBUTING.md). PRs disparam CI (testes+lint,
 Postgres, SonarQube) e o workflow de segurança.

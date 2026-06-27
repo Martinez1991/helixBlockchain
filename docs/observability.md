@@ -1,7 +1,7 @@
 # Observabilidade
 
 Métricas Prometheus, dashboards Grafana, regras de alerta e tracing distribuído.
-Artefatos em [`../ops/`](../ops/).
+Artefatos em [`../ops/`](https://github.com/Martinez1991/helixBlockchain/tree/master/ops).
 
 ## Métricas (`GET /metrics`)
 
@@ -26,7 +26,7 @@ Prometheus Operator, o chart Helm expõe um `ServiceMonitor`
 
 ## Alertas
 
-[`../ops/prometheus/alerts.yml`](../ops/prometheus/alerts.yml) define regras:
+[`../ops/prometheus/alerts.yml`](https://github.com/Martinez1991/helixBlockchain/blob/master/ops/prometheus/alerts.yml) define regras:
 
 - **HelixChainStalled** (crítico) — sem novos blocos em 5 min com pendências.
 - **HelixRoundChangeStorm** (aviso) — muitos timeouts (proposer faltante/partição).
@@ -37,7 +37,7 @@ Prometheus Operator, o chart Helm expõe um `ServiceMonitor`
 
 ## Dashboard
 
-[`../ops/grafana/helix-dashboard.json`](../ops/grafana/helix-dashboard.json) —
+[`../ops/grafana/helix-dashboard.json`](https://github.com/Martinez1991/helixBlockchain/blob/master/ops/grafana/helix-dashboard.json) —
 altura por nó, blocos/s, validadores/quórum, adulterações, rodada, timeouts,
 mempool/fila e descartes. Importe no Grafana (datasource Prometheus).
 

@@ -1,0 +1,55 @@
+site_name: Helix Blockchain
+site_description: Ledger permissionado com consenso BFT para integridade de dados IoT do FIWARE Orion
+site_url: https://martinez1991.github.io/helixBlockchain/
+repo_url: https://github.com/Martinez1991/helixBlockchain
+repo_name: Martinez1991/helixBlockchain
+edit_uri: edit/master/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  language: pt-BR
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/brightness-7, name: Modo escuro }
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle: { icon: material/brightness-4, name: Modo claro }
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Início: README.md
+  - Arquitetura: architecture.md
+  - Configuração: configuration.md
+  - API HTTP: api.md
+  - Segurança: security.md
+  - Observabilidade: observability.md
+  - Operação: operations.md
+  - Instalação: installation.md
+  - Requisitos: requirements.md
+  - Desenvolvimento: development.md
+  - Compliance:
+      - LGPD: compliance/lgpd.md
+      - Classificação de dados: compliance/data-classification.md

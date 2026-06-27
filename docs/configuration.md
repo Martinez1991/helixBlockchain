@@ -2,7 +2,7 @@
 
 Toda a configuração vem de variáveis de ambiente (ou de um arquivo `.env`),
 namespaceadas com `HELIX_` e `__` separando seções aninhadas — ex.:
-`HELIX_ORION__HOST`. Veja [`.env.example`](../.env.example) para um modelo.
+`HELIX_ORION__HOST`. Veja [`.env.example`](https://github.com/Martinez1991/helixBlockchain/blob/master/.env.example) para um modelo.
 
 > **Segredos** (chave privada, token) devem vir de **arquivo** (`*_FILE`) em
 > produção — Docker/k8s secret, Vault/KMS — nunca inline. Ver [security.md](security.md).

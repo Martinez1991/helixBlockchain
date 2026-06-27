@@ -16,7 +16,7 @@ docker compose up --build
 Isso sobe MongoDB, FIWARE Orion e 3 validadores. **Nenhum segredo é versionado**:
 o compose lê chaves/token do `.env` gerado pelo script (apenas para
 desenvolvimento). Para Kubernetes/HA, use o chart em
-[`deploy/helm/helix`](../deploy/helm/helix/README.md).
+[`deploy/helm/helix`](https://github.com/Martinez1991/helixBlockchain/blob/master/deploy/helm/helix/README.md).
 
 ### Opção C — Ingressar numa rede existente
 

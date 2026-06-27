@@ -80,4 +80,4 @@ assert verify_proof(rec.canonical(), steps, bytes.fromhex(body["merkle_root"]))
 
 Acessos aos endpoints sensíveis são registrados no logger `helix.audit`
 (method, path, client, authenticated, status) — encaminhe ao SIEM.
-Ver [security.md](security.md) e [compliance/](compliance/).
+Ver [security.md](security.md) e [compliance/](compliance/lgpd.md).

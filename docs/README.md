@@ -23,14 +23,14 @@
 
 ## Desenvolvimento
 - [development.md](development.md) — ambiente, testes, lint, arquitetura e contribuição.
-- [../CONTRIBUTING.md](../CONTRIBUTING.md) — como contribuir.
-- [../SECURITY.md](../SECURITY.md) — política de segurança / reporte de vulnerabilidades.
-- [../CHANGELOG.md](../CHANGELOG.md) — histórico de versões.
+- [../CONTRIBUTING.md](https://github.com/Martinez1991/helixBlockchain/blob/master/CONTRIBUTING.md) — como contribuir.
+- [../SECURITY.md](https://github.com/Martinez1991/helixBlockchain/blob/master/SECURITY.md) — política de segurança / reporte de vulnerabilidades.
+- [../CHANGELOG.md](https://github.com/Martinez1991/helixBlockchain/blob/master/CHANGELOG.md) — histórico de versões.
 
 ## Deploy e verificação
-- [../deploy/helm/helix/README.md](../deploy/helm/helix/README.md) — chart Helm (HA).
-- [../specs/README.md](../specs/README.md) — verificação formal (TLA+) e fuzzing.
-- [../ops/](../ops/) — dashboard Grafana e regras de alerta Prometheus.
+- [../deploy/helm/helix/README.md](https://github.com/Martinez1991/helixBlockchain/blob/master/deploy/helm/helix/README.md) — chart Helm (HA).
+- [../specs/README.md](https://github.com/Martinez1991/helixBlockchain/blob/master/specs/README.md) — verificação formal (TLA+) e fuzzing.
+- [../ops/](https://github.com/Martinez1991/helixBlockchain/tree/master/ops) — dashboard Grafana e regras de alerta Prometheus.
 
 ## Histórico
-- [../legacy/README.md](../legacy/README.md) — código original do TCC (referência).
+- [../legacy/README.md](https://github.com/Martinez1991/helixBlockchain/blob/master/legacy/README.md) — código original do TCC (referência).

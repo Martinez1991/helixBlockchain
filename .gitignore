@@ -43,3 +43,6 @@ data/
 *.swp
 .DS_Store
 Thumbs.db
+
+# MkDocs build output
+/site/

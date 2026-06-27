@@ -1,7 +1,7 @@
 # Modelo de segurança
 
 O Helix garante **integridade** (não confidencialidade) dos dados de IoT. Esta
-página consolida os controles. Reporte de vulnerabilidades: [../SECURITY.md](../SECURITY.md).
+página consolida os controles. Reporte de vulnerabilidades: [../SECURITY.md](https://github.com/Martinez1991/helixBlockchain/blob/master/SECURITY.md).
 
 ## Superfície e identidades
 
@@ -36,7 +36,7 @@ página consolida os controles. Reporte de vulnerabilidades: [../SECURITY.md](..
   o lock — sem equivocação.
 - **Round-change** preserva safety via certificados de *prepared*/*round-change*.
 - **Robustez:** parsing de mensagens nunca lança em entrada malformada (validado
-  por **fuzzing** — ver [../specs/README.md](../specs/README.md)).
+  por **fuzzing** — ver [../specs/README.md](https://github.com/Martinez1991/helixBlockchain/blob/master/specs/README.md)).
 
 ## Transporte (TLS / mTLS)
 

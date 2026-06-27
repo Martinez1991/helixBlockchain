@@ -293,10 +293,12 @@ class ConsensusEngine:
     def _valid_commit_seal(msg: ConsensusMessage) -> bool:
         if not msg.commit_seal:
             return False
-        sender = PublicKey.from_hex(msg.sender)
-        return sender.verify(
-            bytes.fromhex(msg.commit_seal), msg.block_hash.encode("utf-8")
-        )
+        try:
+            sender = PublicKey.from_hex(msg.sender)
+            seal = bytes.fromhex(msg.commit_seal)
+        except ValueError:
+            return False
+        return sender.verify(seal, msg.block_hash.encode("utf-8"))
 
     def _maybe_advance(self, result: StepResult) -> None:
         if self.proposal is None:
@@ -502,10 +504,11 @@ def verify_finality(block: Block, validators: ValidatorSet) -> bool:
     for sender_hex, seal_hex in block.commit_signatures.items():
         try:
             key = PublicKey.from_hex(sender_hex)
+            seal = bytes.fromhex(seal_hex)
         except ValueError:
             continue
         if not validators.contains(key):
             continue
-        if key.verify(bytes.fromhex(seal_hex), block_hash):
+        if key.verify(seal, block_hash):
             valid += 1
     return valid >= validators.quorum

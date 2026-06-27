@@ -109,12 +109,16 @@ class ConsensusMessage:
         )
 
     def verify_signature(self) -> bool:
-        """Verify the message signature against its declared ``sender``."""
+        """Verify the message signature against its declared ``sender``.
+
+        Returns ``False`` (never raises) on malformed sender/signature hex, so
+        adversarial/garbage messages are safely ignored."""
         try:
             sender_key = PublicKey.from_hex(self.sender)
+            sig = bytes.fromhex(self.signature)
         except ValueError:
             return False
-        return sender_key.verify(bytes.fromhex(self.signature), self.signing_payload())
+        return sender_key.verify(sig, self.signing_payload())
 
     def to_dict(self) -> dict[str, Any]:
         return {

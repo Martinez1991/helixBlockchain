@@ -50,6 +50,8 @@ helix-node = "helix_blockchain.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/helix_blockchain"]
+# Ensure non-Python assets (the /ui console) are packaged in the wheel.
+artifacts = ["src/helix_blockchain/static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

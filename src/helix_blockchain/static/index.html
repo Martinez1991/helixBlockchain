@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Console</title>
+<style>
+  :root{--bg:#0f1320;--panel:#171c2e;--line:#283150;--fg:#e6e9f2;--mut:#8c95b5;
+        --ok:#2ecc71;--warn:#f1c40f;--bad:#e74c3c;--accent:#6c8cff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  header{display:flex;gap:12px;align-items:center;padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:16px;margin:0}
+  header h1 b{color:var(--accent)}
+  .nodes{margin-left:auto;display:flex;gap:8px;align-items:center}
+  input,select,button{background:#0c1020;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+  input{min-width:260px}
+  button{cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  nav{display:flex;gap:4px;padding:10px 18px;border-bottom:1px solid var(--line)}
+  nav a{padding:6px 12px;border-radius:6px;color:var(--mut);cursor:pointer}
+  nav a.active{background:var(--panel);color:var(--fg)}
+  main{padding:18px;max-width:1200px;margin:0 auto}
+  .tab{display:none} .tab.active{display:block}
+  table{width:100%;border-collapse:collapse;margin:6px 0}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+  .pill.ok{background:rgba(46,204,113,.15);color:var(--ok)}
+  .pill.bad{background:rgba(231,76,60,.15);color:var(--bad)}
+  .pill.warn{background:rgba(241,196,15,.15);color:var(--warn)}
+  .mut{color:var(--mut)} .mono{font-family:ui-monospace,Consolas,monospace}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .stat .n{font-size:24px;font-weight:700} .stat .l{color:var(--mut);font-size:12px}
+  details>summary{cursor:pointer}
+  .row-bad{background:rgba(231,76,60,.06)}
+  code{background:#0c1020;padding:1px 5px;border-radius:4px}
+  .small{font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1><b>Helix</b> Console <span class="mut small" id="ver"></span></h1>
+  <div class="nodes">
+    <span class="mut small">Nós:</span>
+    <input id="nodes" value="" title="URLs base separadas por vírgula">
+    <button onclick="refreshAll()">Atualizar</button>
+    <label class="mut small"><input type="checkbox" id="auto" checked> auto</label>
+  </div>
+</header>
+<nav>
+  <a data-tab="cluster" class="active">Cluster</a>
+  <a data-tab="blocks">Blocos</a>
+  <a data-tab="tamper">Adulterações</a>
+  <a data-tab="verify">Verificar Merkle</a>
+</nav>
+<main>
+  <section id="cluster" class="tab active">
+    <div class="grid" id="stats"></div>
+    <div class="card"><table id="clusterTbl"><thead><tr>
+      <th>Nó</th><th>Status</th><th>Altura</th><th>Round</th><th>Lag</th>
+      <th>Validador</th><th>Validadores</th><th>Quórum</th><th>Último hash</th>
+    </tr></thead><tbody></tbody></table></div>
+    <p class="mut small">Atualiza a cada 3s. O board consulta cada nó via <code>/chain</code> e <code>/health</code>.</p>
+  </section>
+
+  <section id="blocks" class="tab">
+    <div class="card">
+      <label class="mut small">Nó: <select id="blkNode"></select></label>
+      <button onclick="loadBlocks()">Carregar</button>
+      <span class="mut small">últimos 25 blocos</span>
+    </div>
+    <div class="card"><table id="blocksTbl"><thead><tr>
+      <th>#</th><th>Merkle / prev</th><th>Registros</th><th>Mudanças</th><th>Seals</th><th>Timestamp</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section id="tamper" class="tab">
+    <div class="card mut small">Varre os blocos recentes do nó selecionado em <b>Blocos</b> e lista registros com veredito <code>TAMPERED</code>.</div>
+    <div class="card"><table id="tamperTbl"><thead><tr>
+      <th>Bloco</th><th>Dispositivo</th><th>Atributo</th><th>Broker</th><th>Observado em</th><th>Observer</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section id="verify" class="tab">
+    <div class="card">
+      <label class="mut small">Nó: <select id="vNode"></select></label>
+      <label class="mut small">Altura <input id="vH" type="number" value="1" style="min-width:80px"></label>
+      <label class="mut small">Índice <input id="vI" type="number" value="0" style="min-width:80px"></label>
+      <button onclick="verify()">Verificar prova</button>
+    </div>
+    <div class="card" id="vOut"><span class="mut">Busca <code>/proof/{altura}/{índice}</code> e verifica a inclusão Merkle <b>no navegador</b>, sem confiar no nó.</span></div>
+  </section>
+</main>
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+function defaultNodes(){
+  const p=location.port; const base=location.protocol+'//'+location.hostname;
+  if(['8001','8002','8003'].includes(p)) return ['8001','8002','8003'].map(x=>base+':'+x);
+  return [location.origin];
+}
+$('#nodes').value=(localStorage.helixNodes||defaultNodes().join(','));
+function nodes(){return $('#nodes').value.split(',').map(s=>s.trim()).filter(Boolean);}
+$('#nodes').onchange=()=>{localStorage.helixNodes=$('#nodes').value;fillNodeSelects();};
+
+$$('nav a').forEach(a=>a.onclick=()=>{
+  $$('nav a').forEach(x=>x.classList.remove('active'));a.classList.add('active');
+  $$('.tab').forEach(t=>t.classList.remove('active'));$('#'+a.dataset.tab).classList.add('active');
+});
+
+async function j(url,opt){const c=new AbortController();const t=setTimeout(()=>c.abort(),4000);
+  try{const r=await fetch(url,{signal:c.signal,...opt});return r.ok?await r.json():null;}catch(e){return null;}finally{clearTimeout(t);}}
+
+function shortHash(h){return h?h.slice(0,12)+'…':'—';}
+
+async function refreshCluster(){
+  const ns=nodes(); const rows=await Promise.all(ns.map(async u=>{
+    const c=await j(u+'/chain'); const h=await j(u+'/health');
+    return {u,c,up:!!h};
+  }));
+  const maxH=Math.max(0,...rows.filter(r=>r.c).map(r=>r.c.height));
+  const upCount=rows.filter(r=>r.up).length;
+  let vals='—',quorum='—';
+  const ok=rows.find(r=>r.c); if(ok){vals=ok.c.validators;quorum=ok.c.quorum;}
+  $('#stats').innerHTML=[
+    ['Nós no ar',`${upCount}/${ns.length}`],['Altura',maxH],
+    ['Validadores',vals],['Quórum',quorum],
+  ].map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  $('#clusterTbl tbody').innerHTML=rows.map(r=>{
+    if(!r.c) return `<tr><td class="mono">${r.u}</td><td><span class="pill bad">offline</span></td><td colspan="7" class="mut">sem resposta</td></tr>`;
+    const lag=maxH-r.c.height;
+    const lagPill=lag===0?'<span class="pill ok">0</span>':`<span class="pill warn">${lag}</span>`;
+    return `<tr><td class="mono small">${r.c.node_id||r.u}</td>
+      <td><span class="pill ok">online</span></td>
+      <td>${r.c.height}</td><td>${r.c.round??'—'}</td><td>${lagPill}</td>
+      <td>${r.c.is_validator?'<span class="pill ok">sim</span>':'<span class="pill warn">follower</span>'}</td>
+      <td>${r.c.validators}</td><td>${r.c.quorum}</td>
+      <td class="mono small">${shortHash(r.c.latest_hash)}</td></tr>`;
+  }).join('');
+  if(ok) $('#ver').textContent='';
+}
+
+function fillNodeSelects(){
+  for(const id of ['#blkNode','#vNode']){
+    $(id).innerHTML=nodes().map(u=>`<option>${u}</option>`).join('');
+  }
+}
+
+let lastBlocks=[];
+async function loadBlocks(){
+  const u=$('#blkNode').value; const c=await j(u+'/chain'); if(!c){$('#blocksTbl tbody').innerHTML='<tr><td colspan=6 class=mut>nó offline</td></tr>';return;}
+  const top=c.height, from=Math.max(0,top-24);
+  const blocks=[];
+  for(let i=top;i>=from;i--){const b=await j(u+'/blocks/'+i); if(b) blocks.push(b);}
+  lastBlocks=blocks;
+  $('#blocksTbl tbody').innerHTML=blocks.map(b=>{
+    const recs=b.records||[]; const tamper=recs.some(r=>r.verdict==='TAMPERED');
+    const recList=recs.map(r=>`<div class="small ${r.verdict==='TAMPERED'?'':''}">${r.entity_id} · ${r.attribute} · <span class="pill ${r.verdict==='TAMPERED'?'bad':'ok'}">${r.verdict}</span></div>`).join('')||'<span class=mut>—</span>';
+    return `<tr class="${tamper?'row-bad':''}">
+      <td>${b.header.index}</td>
+      <td class="mono small">${shortHash(b.header.merkle_root)}<br><span class=mut>prev ${shortHash(b.header.previous_hash)}</span></td>
+      <td><details><summary>${recs.length}</summary>${recList}</details></td>
+      <td>${(b.validator_changes||[]).length}</td>
+      <td>${Object.keys(b.commit_signatures||{}).length}</td>
+      <td class="mut small">${b.header.timestamp}</td></tr>`;
+  }).join('');
+  renderTamper();
+}
+
+function renderTamper(){
+  const rows=[];
+  for(const b of lastBlocks) for(const r of (b.records||[])) if(r.verdict==='TAMPERED')
+    rows.push(`<tr class="row-bad"><td>#${b.header.index}</td><td class="mono">${r.entity_id}</td><td>${r.attribute}</td><td>${r.source_broker}</td><td class="mut small">${r.observed_at}</td><td class="mono small">${shortHash(r.observer)}</td></tr>`);
+  $('#tamperTbl tbody').innerHTML=rows.join('')||'<tr><td colspan=6 class=mut>Nenhuma adulteração nos blocos carregados. Carregue blocos na aba "Blocos".</td></tr>';
+}
+
+// ---- Merkle proof verification (mirrors domain/merkle.py) ----
+const enc=new TextEncoder();
+async function sha256(bytes){return new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));}
+function cat(...a){let n=a.reduce((s,x)=>s+x.length,0),o=new Uint8Array(n),k=0;for(const x of a){o.set(x,k);k+=x.length;}return o;}
+function hexToBytes(h){const a=new Uint8Array(h.length/2);for(let i=0;i<a.length;i++)a[i]=parseInt(h.substr(i*2,2),16);return a;}
+function toHex(b){return [...b].map(x=>x.toString(16).padStart(2,'0')).join('');}
+function canon(o){ // = python canonical_bytes (sorted keys, compact)
+  if(o===null)return 'null';
+  if(Array.isArray(o))return '['+o.map(canon).join(',')+']';
+  if(typeof o==='object')return '{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+canon(o[k])).join(',')+'}';
+  return JSON.stringify(o);
+}
+async function verify(){
+  const u=$('#vNode').value, h=$('#vH').value, i=$('#vI').value;
+  const out=$('#vOut'); out.innerHTML='<span class=mut>verificando…</span>';
+  const p=await j(`${u}/proof/${h}/${i}`);
+  if(!p){out.innerHTML='<span class="pill bad">erro</span> bloco/registro inexistente ou nó offline';return;}
+  const leaf=enc.encode(canon(p.record));
+  let acc=await sha256(cat(new Uint8Array([0]),leaf));      // leaf prefix 0x00
+  for(const s of p.proof){
+    const sib=hexToBytes(s.sibling);
+    acc=s.right?await sha256(cat(new Uint8Array([1]),acc,sib))
+               :await sha256(cat(new Uint8Array([1]),sib,acc)); // node prefix 0x01
+  }
+  const got=toHex(acc), ok=got===p.merkle_root;
+  out.innerHTML=`<div>${ok?'<span class="pill ok">VÁLIDO ✓</span>':'<span class="pill bad">INVÁLIDO ✗</span>'}
+    O registro <b>${p.record.entity_id}</b> ${ok?'está':'NÃO está'} provado no bloco #${p.height}.</div>
+    <div class="small mono mut" style="margin-top:8px">raiz declarada: ${p.merkle_root}<br>raiz recomputada: ${got}</div>
+    <div class="small mut" style="margin-top:8px">veredito do registro:
+      <span class="pill ${p.record.verdict==='TAMPERED'?'bad':'ok'}">${p.record.verdict}</span></div>`;
+}
+
+function refreshAll(){refreshCluster();}
+fillNodeSelects();
+refreshCluster();
+setInterval(()=>{if($('#auto').checked && $('#cluster').classList.contains('active'))refreshCluster();},3000);
+</script>
+</body>
+</html>

@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import hmac
 import logging
+from importlib import resources
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from helix_blockchain import metrics
 from helix_blockchain.config import Peer
@@ -56,6 +58,16 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="Helix Blockchain Node", version="0.3.0")
     limiter = RateLimiter(rate_limit_rps, rate_limit_burst)
+
+    # The read-only web console (/ui) polls sibling nodes from the browser, so
+    # allow cross-origin GETs (read endpoints are already public; mutating ones
+    # remain token-protected — CORS does not bypass auth).
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -187,6 +199,7 @@ def create_app(
         return {
             "node_id": node.node_id,
             "height": node.height,
+            "round": node.round,
             "latest_hash": latest.hash if latest else None,
             "validators": node.validators.size,
             "quorum": node.validators.quorum,
@@ -197,6 +210,14 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/ui", response_class=HTMLResponse)
+    async def ui() -> str:
+        """Read-only web console: cluster board, block explorer, tampering feed
+        and in-browser Merkle proof verifier."""
+        return resources.files("helix_blockchain.static").joinpath("index.html").read_text(
+            encoding="utf-8"
+        )
 
     @app.get("/metrics")
     async def prometheus_metrics() -> Response:

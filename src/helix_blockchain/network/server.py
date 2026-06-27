@@ -65,7 +65,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -227,22 +227,30 @@ def create_app(
     if debug_api:
 
         @app.post("/admin/submit", dependencies=auth)
-        async def admin_submit(count: int = 1) -> dict[str, Any]:
-            """Inject ``count`` synthetic integrity records (testing hook)."""
+        async def admin_submit(count: int = 1, verdict: str = "OK") -> dict[str, Any]:
+            """Inject ``count`` synthetic integrity records (testing hook).
+
+            ``verdict=TAMPERED`` simulates a tampering detection — useful to
+            exercise the alert/notify pipeline and the console's tampering feed."""
+            try:
+                v = Verdict(verdict)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"bad verdict: {exc}") from exc
             ts = node.now_ms()
+            prefix = "Tampered" if v is Verdict.TAMPERED else "Demo"
             records = [
                 IntegrityRecord(
-                    entity_id=f"Demo:{ts}:{i}",
+                    entity_id=f"{prefix}:{ts}:{i}",
                     attribute="temperature",
                     value_hash=IntegrityRecord.hash_value(20 + i),
-                    source_broker="demo",
-                    verdict=Verdict.OK,
+                    source_broker="federated-broker" if v is Verdict.TAMPERED else "demo",
+                    verdict=v,
                     observed_at=ts,
                 )
                 for i in range(count)
             ]
             await node.submit_records(records)
-            return {"submitted": count, "height": node.height}
+            return {"submitted": count, "verdict": v.value, "height": node.height}
 
         @app.post("/admin/validator", dependencies=auth)
         async def admin_validator(payload: dict[str, Any]) -> dict[str, Any]:

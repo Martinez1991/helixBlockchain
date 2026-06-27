@@ -54,7 +54,9 @@
   <a data-tab="cluster" class="active">Cluster</a>
   <a data-tab="blocks">Blocos</a>
   <a data-tab="tamper">Adulterações</a>
+  <a data-tab="validators">Validadores</a>
   <a data-tab="verify">Verificar Merkle</a>
+  <a data-tab="actions">Ações</a>
 </nav>
 <main>
   <section id="cluster" class="tab active">
@@ -84,6 +86,26 @@
     </tr></thead><tbody></tbody></table></div>
   </section>
 
+  <section id="validators" class="tab">
+    <div class="card">
+      <label class="mut small">Nó: <select id="valNode"></select></label>
+      <button onclick="loadValidators()">Carregar</button>
+      <span class="mut small">deriva a evolução do conjunto a partir das mudanças on-chain</span>
+    </div>
+    <div class="grid" id="valStats"></div>
+    <div class="card">
+      <div class="mut small" style="margin-bottom:6px">Tamanho do conjunto de validadores por altura</div>
+      <div id="valChart"></div>
+    </div>
+    <div class="card">
+      <div class="mut small" style="margin-bottom:6px">Conjunto ativo atual</div>
+      <div id="valSet" class="mono small"></div>
+    </div>
+    <div class="card"><table id="valTbl"><thead><tr>
+      <th>Altura</th><th>Ação</th><th>Validador (pubkey)</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
   <section id="verify" class="tab">
     <div class="card">
       <label class="mut small">Nó: <select id="vNode"></select></label>
@@ -92,6 +114,30 @@
       <button onclick="verify()">Verificar prova</button>
     </div>
     <div class="card" id="vOut"><span class="mut">Busca <code>/proof/{altura}/{índice}</code> e verifica a inclusão Merkle <b>no navegador</b>, sem confiar no nó.</span></div>
+  </section>
+
+  <section id="actions" class="tab">
+    <div class="card">
+      <label class="mut small">Token de cluster:
+        <input id="token" type="password" placeholder="HELIX_CLUSTER_TOKEN" style="min-width:300px"></label>
+      <label class="mut small">Nó alvo: <select id="actNode"></select></label>
+      <span class="mut small">o token fica só no seu navegador (localStorage)</span>
+    </div>
+    <div class="card">
+      <div class="mut small" style="margin-bottom:6px">Submeter registros (dispara consenso)</div>
+      <label class="mut small">Qtd <input id="actCount" type="number" value="2" style="min-width:70px"></label>
+      <label class="mut small">Veredito
+        <select id="actVerdict"><option>OK</option><option>TAMPERED</option></select></label>
+      <button onclick="actSubmit()">Submeter</button>
+    </div>
+    <div class="card">
+      <div class="mut small" style="margin-bottom:6px">Mudar conjunto de validadores</div>
+      <label class="mut small">Ação
+        <select id="actChange"><option>ADD</option><option>REMOVE</option></select></label>
+      <input id="actPub" placeholder="pubkey hex do validador" class="mono" style="min-width:380px">
+      <button onclick="actValidator()">Aplicar</button>
+    </div>
+    <div class="card" id="actOut"><span class="mut">As ações exigem o token e são auditadas (logger <code>helix.audit</code>). Disponíveis com <code>HELIX_DEBUG_API=true</code>.</span></div>
   </section>
 </main>
 <script>
@@ -143,8 +189,8 @@ async function refreshCluster(){
 }
 
 function fillNodeSelects(){
-  for(const id of ['#blkNode','#vNode']){
-    $(id).innerHTML=nodes().map(u=>`<option>${u}</option>`).join('');
+  for(const id of ['#blkNode','#vNode','#valNode','#actNode']){
+    if($(id)) $(id).innerHTML=nodes().map(u=>`<option>${u}</option>`).join('');
   }
 }
 
@@ -174,6 +220,73 @@ function renderTamper(){
   for(const b of lastBlocks) for(const r of (b.records||[])) if(r.verdict==='TAMPERED')
     rows.push(`<tr class="row-bad"><td>#${b.header.index}</td><td class="mono">${r.entity_id}</td><td>${r.attribute}</td><td>${r.source_broker}</td><td class="mut small">${r.observed_at}</td><td class="mono small">${shortHash(r.observer)}</td></tr>`);
   $('#tamperTbl tbody').innerHTML=rows.join('')||'<tr><td colspan=6 class=mut>Nenhuma adulteração nos blocos carregados. Carregue blocos na aba "Blocos".</td></tr>';
+}
+
+// ---- Validators / membership evolution ----
+async function loadValidators(){
+  const u=$('#valNode').value; const c=await j(u+'/chain');
+  if(!c){$('#valSet').textContent='nó offline';return;}
+  const top=c.height; const changes=[]; const sizeAt=[];
+  let size=0;
+  for(let i=0;i<=top;i++){
+    const b=await j(u+'/blocks/'+i); if(!b)continue;
+    for(const ch of (b.validator_changes||[])){
+      size += ch.action==='ADD'?1:-1;
+      changes.push({h:i,...ch});
+    }
+    sizeAt.push({h:i,size});
+  }
+  $('#valStats').innerHTML=[
+    ['Validadores ativos',c.validators],['Quórum',c.quorum],
+    ['Mudanças totais',changes.length],['Tolera bizantinos (f)',Math.floor((c.validators-1)/3)],
+  ].map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  $('#valSet').innerHTML=(c.validator_keys||[]).map(k=>`<div>• ${k}</div>`).join('')||'—';
+  $('#valTbl tbody').innerHTML=changes.length?changes.map(ch=>
+    `<tr><td>#${ch.h}</td><td><span class="pill ${ch.action==='ADD'?'ok':'bad'}">${ch.action}</span></td><td class="mono small">${ch.validator}</td></tr>`).join('')
+    :'<tr><td colspan=3 class=mut>Só o genesis (sem mudanças posteriores).</td></tr>';
+  drawChart(sizeAt);
+}
+function drawChart(pts){
+  if(!pts.length){$('#valChart').innerHTML='<span class=mut>sem dados</span>';return;}
+  const W=900,H=160,P=28; const maxH=Math.max(1,...pts.map(p=>p.h));
+  const maxS=Math.max(1,...pts.map(p=>p.size));
+  const x=h=>P+(W-2*P)*(maxH?h/maxH:0), y=s=>H-P-(H-2*P)*(s/maxS);
+  // step line
+  let d=`M ${x(pts[0].h)} ${y(pts[0].size)}`;
+  for(let i=1;i<pts.length;i++) d+=` L ${x(pts[i].h)} ${y(pts[i-1].size)} L ${x(pts[i].h)} ${y(pts[i].size)}`;
+  const dots=pts.map(p=>`<circle cx="${x(p.h)}" cy="${y(p.size)}" r="2.5" fill="#6c8cff"/>`).join('');
+  const yl=[0,maxS].map(s=>`<text x="6" y="${y(s)+4}" fill="#8c95b5" font-size="11">${s}</text><line x1="${P}" y1="${y(s)}" x2="${W-P}" y2="${y(s)}" stroke="#283150"/>`).join('');
+  $('#valChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none">
+    ${yl}<path d="${d}" fill="none" stroke="#6c8cff" stroke-width="2"/>${dots}
+    <text x="${P}" y="${H-6}" fill="#8c95b5" font-size="11">altura 0</text>
+    <text x="${W-P}" y="${H-6}" fill="#8c95b5" font-size="11" text-anchor="end">altura ${maxH}</text></svg>`;
+}
+
+// ---- Actions (token-gated) ----
+$('#token').value=localStorage.helixToken||'';
+$('#token').onchange=()=>localStorage.helixToken=$('#token').value;
+async function post(url,body){
+  const h={'Authorization':'Bearer '+$('#token').value};
+  if(body) h['Content-Type']='application/json';
+  try{const r=await fetch(url,{method:'POST',headers:h,body:body?JSON.stringify(body):undefined});
+    return {ok:r.ok,status:r.status,data:await r.json().catch(()=>({}))};}
+  catch(e){return {ok:false,status:0,data:{detail:String(e)}};}
+}
+function actMsg(r,extra=''){
+  const cls=r.ok?'ok':'bad';
+  $('#actOut').innerHTML=`<span class="pill ${cls}">${r.ok?'OK':'ERRO '+r.status}</span> `+
+    (r.ok?extra+' '+JSON.stringify(r.data):(r.data.detail||'falha'));
+}
+async function actSubmit(){
+  const u=$('#actNode').value, n=$('#actCount').value, v=$('#actVerdict').value;
+  const r=await post(`${u}/admin/submit?count=${n}&verdict=${v}`);
+  actMsg(r,`${n} registro(s) ${v} submetidos →`);
+}
+async function actValidator(){
+  const u=$('#actNode').value, action=$('#actChange').value, validator=$('#actPub').value.trim();
+  if(!validator){actMsg({ok:false,status:0,data:{detail:'informe a pubkey'}});return;}
+  const r=await post(`${u}/admin/validator`,{action,validator});
+  actMsg(r,`${action} →`);
 }
 
 // ---- Merkle proof verification (mirrors domain/merkle.py) ----

@@ -174,7 +174,9 @@ class HttpTransport:
     ) -> None:
         self._registry = registry
         self._scheme = scheme(tls) if tls else "http"
-        headers = {"Authorization": f"Bearer {cluster_token}"} if cluster_token else None
+        # Use the first token for outbound requests (peers accept any during rotation).
+        primary = next((t.strip() for t in cluster_token.split(",") if t.strip()), "")
+        headers = {"Authorization": f"Bearer {primary}"} if primary else None
         self._client = httpx.AsyncClient(
             timeout=timeout, headers=headers, **(httpx_tls_kwargs(tls) if tls else {})
         )

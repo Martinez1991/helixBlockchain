@@ -42,12 +42,15 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="Helix Blockchain Node", version="0.2.0")
 
+    accepted = [t.strip() for t in cluster_token.split(",") if t.strip()]
+
     async def require_token(authorization: str = Header(default="")) -> None:
-        if not cluster_token:
+        if not accepted:
             return  # auth disabled
-        expected = f"Bearer {cluster_token}"
-        # Constant-time comparison avoids leaking the token via timing.
-        if not hmac.compare_digest(authorization, expected):
+        # Constant-time comparison against each accepted token (supports rotation).
+        if not any(
+            hmac.compare_digest(authorization, f"Bearer {t}") for t in accepted
+        ):
             raise HTTPException(status_code=401, detail="invalid or missing token")
 
     auth = [Depends(require_token)]

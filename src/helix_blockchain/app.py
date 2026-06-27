@@ -55,12 +55,15 @@ def _advertise_peer(settings: Settings, private_key: PrivateKey) -> Peer | None:
 
 
 def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
-    if not settings.node.private_key_hex:
+    private_key_hex = settings.resolved_private_key_hex()
+    if not private_key_hex:
         raise SystemExit(
-            "HELIX_NODE__PRIVATE_KEY_HEX is not set. "
+            "No private key configured. Set HELIX_NODE__PRIVATE_KEY_HEX or "
+            "HELIX_NODE__PRIVATE_KEY_FILE (Docker/k8s/Vault secret). "
             "Generate one with: python -m helix_blockchain.tools.keygen"
         )
-    private_key = PrivateKey.from_hex(settings.node.private_key_hex)
+    private_key = PrivateKey.from_hex(private_key_hex)
+    cluster_token = settings.resolved_cluster_token()
     validators = ValidatorSet(
         [private_key.public, *(p.public_key for p in settings.consensus.peers)]
     )
@@ -73,7 +76,7 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
     journal_store = SqlConsensusJournalStore(settings.storage.url)
     transport = HttpTransport(
         registry,
-        cluster_token=settings.cluster_token,
+        cluster_token=cluster_token,
         tls=settings.tls,
     )
     notifier = ConsoleNotifier()
@@ -117,7 +120,8 @@ async def monitor_loop(node: Node, settings: Settings) -> None:
 async def run(settings: Settings) -> None:
     node, transport = build_node(settings)
     api = create_app(
-        node, debug_api=settings.debug_api, cluster_token=settings.cluster_token
+        node, debug_api=settings.debug_api,
+        cluster_token=settings.resolved_cluster_token(),
     )
     config = uvicorn.Config(
         api,

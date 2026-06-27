@@ -7,12 +7,21 @@ sections, e.g. ``HELIX_ORION__HOST``. See ``.env.example`` for the full list.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from helix_blockchain.domain.crypto import PublicKey
+
+
+def _read_secret(inline: str, file: str) -> str:
+    """Resolve a secret, preferring a file (Docker/k8s/Vault-agent ``*_FILE``
+    convention) over an inline value so secrets never need to live in env/code."""
+    if file:
+        return Path(file).read_text(encoding="utf-8").strip()
+    return inline
 
 
 @dataclass(frozen=True)
@@ -50,6 +59,8 @@ class Peer:
 class NodeSettings(BaseSettings):
     node_id: str = "node-1"
     private_key_hex: str = ""
+    # Read the private key from this file instead (Docker/k8s secret mount).
+    private_key_file: str = ""
 
 
 class OrionSettings(BaseSettings):
@@ -123,9 +134,18 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     # Enables the /admin/submit test hook. Demo/testing only.
     debug_api: bool = False
-    # Shared bearer token authenticating peer-to-peer endpoints (/consensus,
-    # /mempool, /block). When empty, authentication is disabled (dev only).
+    # Shared bearer token(s) authenticating peer-to-peer endpoints. Comma-separate
+    # to accept several during rotation (the first is used for outbound requests).
+    # When empty, authentication is disabled (dev only).
     cluster_token: str = ""
+    # Read the token(s) from this file instead (secret mount).
+    cluster_token_file: str = ""
+
+    def resolved_private_key_hex(self) -> str:
+        return _read_secret(self.node.private_key_hex, self.node.private_key_file)
+
+    def resolved_cluster_token(self) -> str:
+        return _read_secret(self.cluster_token, self.cluster_token_file)
 
 
 def load_settings() -> Settings:

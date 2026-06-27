@@ -67,7 +67,7 @@ jobs:
       - run: |
           pip install . cyclonedx-bom
           cyclonedx-py environment -o sbom.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: sbom, path: sbom.json }
 
   iac-scan:

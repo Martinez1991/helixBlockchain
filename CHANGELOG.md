@@ -3,6 +3,27 @@
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/);
 versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] — 2026-06-27 — Console web + confidencialidade
+
+### Added
+- **Console web read-only** em `GET /ui` (SPA estática, sem build): board do
+  cluster (altura/round/lag/validador por nó), explorer de blocos com drill-down,
+  feed de adulterações, **aba Validadores** (evolução do conjunto com gráfico),
+  **aba Ações** (com token: submeter registros OK/TAMPERED, add/remove validador)
+  e **verificador de prova de Merkle no navegador**.
+- **Confidencialidade alvo**:
+  - `value_hash` como **commitment com chave** `HMAC(HELIX_COMMIT_KEY, valor)`
+    — bloqueia força-bruta de valores de baixa entropia; fallback SHA-256 sem chave.
+  - **Pseudonimização** opcional de `entity_id` (`HELIX_PSEUDONYMIZE_ENTITIES`)
+    → `pid:HMAC(chave, id)`, suportando *crypto-shredding* (LGPD).
+- `/admin/submit` aceita `verdict=OK|TAMPERED` (exercita o pipeline de adulteração).
+- `/chain` expõe `round`; CORS para o console cruzar nós.
+- Documentação at-rest/in-transit; chave de commit no compose/Helm/`gen_dev_secrets`.
+
+### Changed
+- Detecção continua nos valores brutos; só os campos **armazenados** ficam
+  confidenciais (commitment determinístico → validadores ainda concordam).
+
 ## [0.3.0] — 2026-06-27 — Production hardening
 
 Implementa todas as 15 issues da auditoria (#3–#17). 183 testes; CI verde.

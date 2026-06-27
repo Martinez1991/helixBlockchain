@@ -59,7 +59,7 @@ def create_app(
     confidentiality: Confidentiality | None = None,
 ) -> FastAPI:
     conf = confidentiality or Confidentiality()
-    app = FastAPI(title="Helix Blockchain Node", version="0.3.0")
+    app = FastAPI(title="Helix Blockchain Node", version="0.4.0")
     limiter = RateLimiter(rate_limit_rps, rate_limit_burst)
 
     # The read-only web console (/ui) polls sibling nodes from the browser, so

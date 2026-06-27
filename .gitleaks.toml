@@ -1,0 +1,21 @@
+title = "Helix gitleaks config"
+
+[extend]
+useDefault = true
+
+# Dev-ONLY demo material that existed in early commits (compose) and has since
+# been removed from the tree and rotated. These were never production secrets;
+# the demo now generates fresh keys via scripts/gen_dev_secrets.py.
+[allowlist]
+description = "Dev-only demo secrets (rotated; removed from working tree)"
+regexes = [
+  '''6592960e6199e321bb0420bbf4fc77eb166990fd0c37b0abffc2430fa789d66f''',
+  '''d0ff63934e60cb26f2ef07512d73124f7e115b73b338479a8bdccac375b6a213''',
+  '''79cdffb1792582791dda7c9486449788afbcb67fa9917459e5c9aab85f80540a''',
+  '''demo-shared-token''',
+]
+# Test fixtures and the preserved TCC code use throwaway/sample values.
+paths = [
+  '''legacy/.*''',
+  '''tests/.*''',
+]

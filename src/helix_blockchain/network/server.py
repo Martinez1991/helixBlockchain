@@ -24,29 +24,68 @@ inject bogus tampering reports.
 from __future__ import annotations
 
 import hmac
+import logging
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
+from helix_blockchain import metrics
 from helix_blockchain.config import Peer
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
 from helix_blockchain.domain.membership import ValidatorChange
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
+from helix_blockchain.network.ratelimit import RateLimiter
+
+audit_log = logging.getLogger("helix.audit")
+
+# Mutating endpoints subject to rate limiting and body-size limits.
+_PROTECTED_PREFIXES = ("/consensus", "/mempool", "/membership", "/block", "/peers", "/admin")
 
 
 def create_app(
-    node: Node, *, debug_api: bool = False, cluster_token: str = ""
+    node: Node,
+    *,
+    debug_api: bool = False,
+    cluster_token: str = "",
+    rate_limit_rps: float = 0.0,
+    rate_limit_burst: int = 200,
+    max_body_bytes: int = 1_048_576,
 ) -> FastAPI:
     app = FastAPI(title="Helix Blockchain Node", version="0.2.0")
+    limiter = RateLimiter(rate_limit_rps, rate_limit_burst)
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        client = request.client.host if request.client else "unknown"
+        if request.method == "POST" and request.url.path.startswith(_PROTECTED_PREFIXES):
+            length = request.headers.get("content-length")
+            if length is not None and int(length) > max_body_bytes:
+                return JSONResponse({"detail": "payload too large"}, status_code=413)
+            if not limiter.allow(client):
+                return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
+        response = await call_next(request)
+        # Access audit trail (ISO 27001 A.12.4 / LGPD accountability): who did
+        # what, when, with what outcome. Ship this logger to your SIEM.
+        if request.url.path.startswith(_PROTECTED_PREFIXES):
+            audit_log.info(
+                "access method=%s path=%s client=%s authenticated=%s status=%s",
+                request.method, request.url.path, client,
+                bool(request.headers.get("authorization")), response.status_code,
+            )
+        return response
+
+    accepted = [t.strip() for t in cluster_token.split(",") if t.strip()]
 
     async def require_token(authorization: str = Header(default="")) -> None:
-        if not cluster_token:
+        if not accepted:
             return  # auth disabled
-        expected = f"Bearer {cluster_token}"
-        # Constant-time comparison avoids leaking the token via timing.
-        if not hmac.compare_digest(authorization, expected):
+        # Constant-time comparison against each accepted token (supports rotation).
+        if not any(
+            hmac.compare_digest(authorization, f"Bearer {t}") for t in accepted
+        ):
             raise HTTPException(status_code=401, detail="invalid or missing token")
 
     auth = [Depends(require_token)]
@@ -61,7 +100,8 @@ def create_app(
             ) from exc
         # Queue and return immediately so the sender's broadcast never blocks on
         # our processing (avoids re-entrant consensus deadlock).
-        node.enqueue_inbound(message)
+        if not node.enqueue_inbound(message):
+            raise HTTPException(status_code=503, detail="inbox full, retry later")
         return {"status": "accepted"}
 
     @app.post("/mempool", dependencies=auth)
@@ -119,6 +159,28 @@ def create_app(
             raise HTTPException(status_code=404, detail="block not found")
         return block.to_dict()
 
+    @app.get("/proof/{height}/{index}")
+    async def inclusion_proof(height: int, index: int) -> dict[str, Any]:
+        """Merkle inclusion proof that ``records[index]`` is in finalized block
+        ``height`` — verifiable offline against the block's Merkle root."""
+        block = node.repo.get(height)
+        if block is None:
+            raise HTTPException(status_code=404, detail="block not found")
+        if not 0 <= index < len(block.records):
+            raise HTTPException(status_code=404, detail="record index out of range")
+        steps = block.proof_for_record(index)
+        return {
+            "height": height,
+            "index": index,
+            "merkle_root": block.header.merkle_root,
+            "block_hash": block.hash,
+            "record": block.records[index].to_dict(),
+            "proof": [
+                {"sibling": s.sibling.hex(), "right": s.sibling_on_right}
+                for s in steps
+            ],
+        }
+
     @app.get("/chain")
     async def chain() -> dict[str, Any]:
         latest = node.repo.latest()
@@ -135,6 +197,11 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    async def prometheus_metrics() -> Response:
+        body, content_type = metrics.render()
+        return Response(content=body, media_type=content_type)
 
     if debug_api:
 

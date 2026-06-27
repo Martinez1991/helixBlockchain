@@ -1,15 +1,29 @@
 # Demo cluster: MongoDB + FIWARE Orion + a 3-validator Helix Blockchain network.
 #
-# ⚠️  The validator keys below are DEV-ONLY and public in this repo. Generate
-#     fresh ones for any real deployment:  python -m helix_blockchain.tools.keygen
+# Secrets are NOT versioned. Generate a local `.env` (gitignored) first:
+#     python scripts/gen_dev_secrets.py
+# then: docker compose up --build
 #
 # With 3 validators, f = 0 and quorum = 3 (all must agree). For Byzantine fault
 # tolerance (f = 1) run 4 validators.
 
-x-node-pubkeys: &dummy
-  # node-1 pub: 740d84745c42bd4fab91eb83c69f70c28653fe64bcd948332ca1abb6764d0bc8
-  # node-2 pub: 8026ef9ae2f276cf645e77bb0e5b7cb380b62dafb9b6b4d2e406c4259be49412
-  # node-3 pub: c94e4751b4ffbcef0e76a97cb443ecbd4db2d33d5444b76d6f02027d00c5d2dc
+x-node: &node-defaults
+  build: .
+  depends_on: [orion]
+  restart: unless-stopped
+  environment: &node-env
+    HELIX_ORION__HOST: mongo
+    HELIX_ORION__PASSWORD: ""
+    HELIX_CONSENSUS__BIND_PORT: "8000"
+    HELIX_STORAGE__URL: sqlite:////app/data/chain.db
+    HELIX_DEBUG_API: "true"             # demo only: enables /admin/submit
+    HELIX_CLUSTER_TOKEN: ${CLUSTER_TOKEN}
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+    interval: 10s
+    timeout: 3s
+    retries: 5
+  networks: [helix]
 
 services:
   mongo:
@@ -26,61 +40,37 @@ services:
     networks: [helix]
 
   node-1:
-    build: .
-    depends_on: [orion]
+    <<: *node-defaults
     environment:
+      <<: *node-env
       HELIX_NODE__NODE_ID: node-1
-      HELIX_NODE__PRIVATE_KEY_HEX: 6592960e6199e321bb0420bbf4fc77eb166990fd0c37b0abffc2430fa789d66f
+      HELIX_NODE__PRIVATE_KEY_HEX: ${NODE1_KEY}
       HELIX_CONSENSUS__ADVERTISE: node-1:8000
-      HELIX_ORION__HOST: mongo
-      HELIX_ORION__PASSWORD: ""
-      HELIX_CONSENSUS__BIND_PORT: "8000"
-      HELIX_CONSENSUS__PEERS: >-
-        node-2@node-2:8000|8026ef9ae2f276cf645e77bb0e5b7cb380b62dafb9b6b4d2e406c4259be49412,node-3@node-3:8000|c94e4751b4ffbcef0e76a97cb443ecbd4db2d33d5444b76d6f02027d00c5d2dc
-      HELIX_STORAGE__URL: sqlite:////app/data/chain.db
-      HELIX_DEBUG_API: "true"   # demo only: enables /admin/submit
-      HELIX_CLUSTER_TOKEN: "demo-shared-token"   # same on every node
+      HELIX_CONSENSUS__PEERS: node-2@node-2:8000|${NODE2_PUB},node-3@node-3:8000|${NODE3_PUB}
     ports:
       - "8001:8000"
-    networks: [helix]
 
   node-2:
-    build: .
-    depends_on: [orion]
+    <<: *node-defaults
     environment:
+      <<: *node-env
       HELIX_NODE__NODE_ID: node-2
-      HELIX_NODE__PRIVATE_KEY_HEX: d0ff63934e60cb26f2ef07512d73124f7e115b73b338479a8bdccac375b6a213
+      HELIX_NODE__PRIVATE_KEY_HEX: ${NODE2_KEY}
       HELIX_CONSENSUS__ADVERTISE: node-2:8000
-      HELIX_ORION__HOST: mongo
-      HELIX_ORION__PASSWORD: ""
-      HELIX_CONSENSUS__BIND_PORT: "8000"
-      HELIX_CONSENSUS__PEERS: >-
-        node-1@node-1:8000|740d84745c42bd4fab91eb83c69f70c28653fe64bcd948332ca1abb6764d0bc8,node-3@node-3:8000|c94e4751b4ffbcef0e76a97cb443ecbd4db2d33d5444b76d6f02027d00c5d2dc
-      HELIX_STORAGE__URL: sqlite:////app/data/chain.db
-      HELIX_DEBUG_API: "true"   # demo only: enables /admin/submit
-      HELIX_CLUSTER_TOKEN: "demo-shared-token"   # same on every node
+      HELIX_CONSENSUS__PEERS: node-1@node-1:8000|${NODE1_PUB},node-3@node-3:8000|${NODE3_PUB}
     ports:
       - "8002:8000"
-    networks: [helix]
 
   node-3:
-    build: .
-    depends_on: [orion]
+    <<: *node-defaults
     environment:
+      <<: *node-env
       HELIX_NODE__NODE_ID: node-3
-      HELIX_NODE__PRIVATE_KEY_HEX: 79cdffb1792582791dda7c9486449788afbcb67fa9917459e5c9aab85f80540a
+      HELIX_NODE__PRIVATE_KEY_HEX: ${NODE3_KEY}
       HELIX_CONSENSUS__ADVERTISE: node-3:8000
-      HELIX_ORION__HOST: mongo
-      HELIX_ORION__PASSWORD: ""
-      HELIX_CONSENSUS__BIND_PORT: "8000"
-      HELIX_CONSENSUS__PEERS: >-
-        node-1@node-1:8000|740d84745c42bd4fab91eb83c69f70c28653fe64bcd948332ca1abb6764d0bc8,node-2@node-2:8000|8026ef9ae2f276cf645e77bb0e5b7cb380b62dafb9b6b4d2e406c4259be49412
-      HELIX_STORAGE__URL: sqlite:////app/data/chain.db
-      HELIX_DEBUG_API: "true"   # demo only: enables /admin/submit
-      HELIX_CLUSTER_TOKEN: "demo-shared-token"   # same on every node
+      HELIX_CONSENSUS__PEERS: node-1@node-1:8000|${NODE1_PUB},node-2@node-2:8000|${NODE2_PUB}
     ports:
       - "8003:8000"
-    networks: [helix]
 
 networks:
   helix:

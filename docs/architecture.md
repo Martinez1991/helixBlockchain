@@ -1,5 +1,16 @@
 # Arquitetura (v2)
 
+> **Hardening (issues #3–#17).** A v2 recebeu: WAL de votos para crash-recovery
+> seguro (#3), assinatura de registros anti-injeção (#4), observabilidade
+> Prometheus + alertas (#5), segredos via arquivo + rotação de token (#6),
+> coleta event-driven via Change Streams (#7), pipeline DevSecOps (#8), rate
+> limiting/backpressure (#9), Postgres em CI + backup (#10), tracing OTel (#11),
+> notificações webhook/SIEM (#12), prova de inclusão Merkle (#13), chart
+> Helm HA (#14), spec TLA+ + fuzzing (#15), bootstrap de genesis (#16) e trilha
+> de auditoria + dossiê LGPD (#17). Detalhes operacionais em
+> [operations.md](operations.md), segurança/compliance em
+> [compliance/](compliance/), verificação formal em [../specs/](../specs/).
+
 ## Visão geral
 
 O Helix Blockchain é um **ledger permissionado com consenso BFT** que registra,

@@ -20,11 +20,13 @@ import asyncio
 import logging
 from collections.abc import Callable
 
+from helix_blockchain import metrics, tracing
 from helix_blockchain.consensus.engine import (
     ConsensusEngine,
     StepResult,
     verify_finality,
 )
+from helix_blockchain.consensus.journal import ConsensusJournalStore, NullJournalStore
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.block import Block, genesis_block
@@ -35,7 +37,7 @@ from helix_blockchain.domain.membership import (
     apply_changes,
     derive_validator_set,
 )
-from helix_blockchain.domain.records import IntegrityRecord
+from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.network.transport import Transport
 from helix_blockchain.storage.repository import BlockRepository
@@ -58,6 +60,8 @@ class Node:
         now_ms: Callable[[], int],
         on_commit: CommitHook | None = None,
         peer_registry: PeerRegistry | None = None,
+        journal_store: ConsensusJournalStore | None = None,
+        max_inbox: int = 10_000,
     ) -> None:
         self.node_id = node_id
         self.private_key = private_key
@@ -68,6 +72,8 @@ class Node:
         self.now_ms = now_ms
         self.on_commit = on_commit
         self.peer_registry = peer_registry or PeerRegistry(self.me.to_hex())
+        # Durable write-ahead journal of consensus votes for crash-recovery.
+        self._journal_store = journal_store or NullJournalStore()
 
         self._pending: list[IntegrityRecord] = []
         self._pending_changes: list[ValidatorChange] = []
@@ -79,7 +85,7 @@ class Node:
         # so the HTTP handler returns immediately. This is what prevents a
         # re-entrant deadlock: a node broadcasting under its lock would otherwise
         # block on a peer that synchronously broadcasts back to it.
-        self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue()
+        self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue(maxsize=max_inbox)
 
         if self.repo.height() < 0:
             # Genesis embeds the initial validator set, making the chain
@@ -108,12 +114,14 @@ class Node:
         assert latest is not None
         if not self._active.contains(self.me):
             return None
+        height = latest.index + 1
         return ConsensusEngine(
             validators=self._active,
             private_key=self.private_key,
-            height=latest.index + 1,
+            height=height,
             previous_hash=latest.hash,
             now_ms=self.now_ms,
+            journal=self._journal_store.view(height),
         )
 
     @property
@@ -132,8 +140,9 @@ class Node:
 
     # ── public API ─────────────────────────────────────────────────────
     async def submit_records(self, records: list[IntegrityRecord]) -> None:
-        """Add locally observed records, gossip them to peers, and maybe propose."""
-        await self._ingest_records(records, gossip=True)
+        """Sign locally observed records, gossip them to peers, and maybe propose."""
+        signed = [r.signed(self.private_key) for r in records]
+        await self._ingest_records(signed, gossip=True)
 
     async def receive_records(self, records: list[IntegrityRecord]) -> None:
         """Add records gossiped by a peer (no re-gossip in a full-mesh network)."""
@@ -177,10 +186,20 @@ class Node:
         self, records: list[IntegrityRecord], *, gossip: bool
     ) -> None:
         async with self._lock:
-            fresh = [r for r in records if r.id not in self._mempool_seen]
+            # Anti-injection: only records validly signed by a current validator
+            # are accepted; unsigned/forged records are dropped.
+            authentic = []
+            for r in records:
+                if r.verify(self._active):
+                    authentic.append(r)
+                else:
+                    log.warning("node=%s dropping unsigned/invalid record for %s",
+                                self.node_id, r.entity_id)
+            metrics.observe_records_dropped(len(records) - len(authentic))
+            fresh = [r for r in authentic if r.content_key not in self._mempool_seen]
             if not fresh:
                 return
-            self._mempool_seen.update(r.id for r in fresh)
+            self._mempool_seen.update(r.content_key for r in fresh)
             self._pending.extend(fresh)
             if gossip:
                 await self.transport.gossip_records([r.to_dict() for r in fresh])
@@ -202,9 +221,17 @@ class Node:
             if self._engine is not None:
                 await self._apply_locked(self._engine.on_timeout())
 
-    def enqueue_inbound(self, message: ConsensusMessage) -> None:
-        """Queue a peer message for the worker (called from the HTTP handler)."""
-        self._inbox.put_nowait(message)
+    def enqueue_inbound(self, message: ConsensusMessage) -> bool:
+        """Queue a peer message for the worker. Returns ``False`` (backpressure)
+        if the inbox is full, so the caller can shed load."""
+        try:
+            self._inbox.put_nowait(message)
+        except asyncio.QueueFull:
+            log.warning("node=%s inbox full; dropping inbound message", self.node_id)
+            metrics.observe_inbound(self._inbox.qsize())
+            return False
+        metrics.observe_inbound(self._inbox.qsize())
+        return True
 
     async def inbound_worker(self) -> None:
         """Process queued inbound messages serially, off the HTTP request path."""
@@ -219,13 +246,17 @@ class Node:
 
     async def on_message(self, message: ConsensusMessage) -> None:
         """Handle an inbound consensus message from a peer."""
-        async with self._lock:
-            working_height = self.repo.height() + 1
-            if message.height > working_height:
-                await self._sync_locked(up_to=message.height - 1)
-            if self._engine is None or message.height != self._engine.height:
-                return  # follower, or stale/future after sync; ignore
-            await self._apply_locked(self._engine.handle(message))
+        with tracing.tracer().start_as_current_span("consensus.handle") as span:
+            span.set_attribute("helix.msg_type", message.type.value)
+            span.set_attribute("helix.height", message.height)
+            span.set_attribute("helix.round", message.round)
+            async with self._lock:
+                working_height = self.repo.height() + 1
+                if message.height > working_height:
+                    await self._sync_locked(up_to=message.height - 1)
+                if self._engine is None or message.height != self._engine.height:
+                    return  # follower, or stale/future after sync; ignore
+                await self._apply_locked(self._engine.handle(message))
 
     async def discovery_loop(self, interval_s: float) -> None:
         """Announce ourselves and pull peers' registries to learn new addresses."""
@@ -265,7 +296,9 @@ class Node:
                         "node=%s round timeout at height=%s round=%s",
                         self.node_id, self._engine.height, self._engine.round,
                     )
+                    metrics.observe_timeout()
                     await self._apply_locked(self._engine.on_timeout())
+                    metrics.observe_round(self._engine.round if self._engine else 0)
 
     # ── internal (lock held) ───────────────────────────────────────────
     def _set_pending(self) -> StepResult | None:
@@ -304,18 +337,34 @@ class Node:
         validator set by its changes, and rebuild the engine for the next height."""
         self.repo.append(block)
         self._forget_committed(block)
+        # The block is finalized: its height's vote journal is no longer needed.
+        self._journal_store.prune_below(block.index + 1)
         if block.validator_changes:
             self._active = apply_changes(self._active, block.validator_changes)
             log.info("node=%s validator set now size=%d quorum=%d after height %s",
                      self.node_id, self._active.size, self._active.quorum, block.index)
         self._engine = self._new_engine()
+        tampered = sum(1 for r in block.records if r.verdict is Verdict.TAMPERED)
+        span = tracing.trace.get_current_span()
+        span.add_event("block.committed", {
+            "helix.height": block.index,
+            "helix.hash": block.hash,
+            "helix.records": len(block.records),
+            "helix.tampered": tampered,
+        })
+        metrics.observe_commit(tampered)
+        metrics.observe_chain_state(
+            height=self.height, validators=self._active.size,
+            quorum=self._active.quorum, is_validator=self.is_validator,
+            pending=len(self._pending),
+        )
 
     def _forget_committed(self, block: Block) -> None:
         """Drop a committed block's records and changes from local buffers (incl.
         ones we never held), so they are never re-proposed or re-gossiped."""
-        committed_ids = {r.id for r in block.records}
-        self._pending = [r for r in self._pending if r.id not in committed_ids]
-        self._mempool_seen.update(committed_ids)
+        committed = {r.content_key for r in block.records}
+        self._pending = [r for r in self._pending if r.content_key not in committed]
+        self._mempool_seen.update(committed)
         if block.validator_changes:
             applied = set(block.validator_changes)
             self._pending_changes = [

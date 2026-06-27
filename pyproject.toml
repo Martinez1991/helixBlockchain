@@ -22,6 +22,8 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "structlog>=24.1",
+    "prometheus-client>=0.20",
+    "opentelemetry-api>=1.25",
 ]
 
 [project.optional-dependencies]
@@ -31,8 +33,16 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
     "mypy>=1.10",
+    "bandit[toml]>=1.7",
+    "pip-audit>=2.7",
+    "opentelemetry-sdk>=1.25",
+    "hypothesis>=6.100",
 ]
 postgres = ["psycopg[binary]>=3.1"]
+otel = [
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+]
 
 [project.scripts]
 helix-node = "helix_blockchain.app:main"
@@ -58,3 +68,9 @@ python_version = "3.11"
 strict = true
 packages = ["helix_blockchain"]
 mypy_path = "src"
+
+[tool.bandit]
+# B101 assert (tests), B104 bind 0.0.0.0 (config default),
+# B107 empty-string defaults for optional password/token fields (not secrets).
+exclude_dirs = ["tests", "legacy"]
+skips = ["B101", "B104", "B107"]

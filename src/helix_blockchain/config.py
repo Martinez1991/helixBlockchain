@@ -7,12 +7,21 @@ sections, e.g. ``HELIX_ORION__HOST``. See ``.env.example`` for the full list.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from helix_blockchain.domain.crypto import PublicKey
+
+
+def _read_secret(inline: str, file: str) -> str:
+    """Resolve a secret, preferring a file (Docker/k8s/Vault-agent ``*_FILE``
+    convention) over an inline value so secrets never need to live in env/code."""
+    if file:
+        return Path(file).read_text(encoding="utf-8").strip()
+    return inline
 
 
 @dataclass(frozen=True)
@@ -50,6 +59,8 @@ class Peer:
 class NodeSettings(BaseSettings):
     node_id: str = "node-1"
     private_key_hex: str = ""
+    # Read the private key from this file instead (Docker/k8s secret mount).
+    private_key_file: str = ""
 
 
 class OrionSettings(BaseSettings):
@@ -61,6 +72,9 @@ class OrionSettings(BaseSettings):
     tls: bool = False
     tls_ca_file: str = ""  # CA bundle verifying the MongoDB server certificate
     poll_interval: float = 5.0
+    # Event-driven collection via Mongo Change Streams (requires a replica set).
+    # When false, falls back to timed polling every poll_interval seconds.
+    use_change_streams: bool = False
 
 
 class TlsSettings(BaseSettings):
@@ -94,6 +108,15 @@ class ConsensusSettings(BaseSettings):
     # This node's address as peers should reach it (e.g. "node-1:8000"). Used to
     # announce itself for peer discovery; empty disables self-announcement.
     advertise: str = ""
+    # Per-source rate limit for P2P/admin endpoints (requests/sec; 0 = disabled)
+    # and burst size. Plus request body cap and inbound queue bound (backpressure).
+    rate_limit_rps: float = 0.0
+    rate_limit_burst: int = 200
+    max_body_bytes: int = 1_048_576
+    max_inbox: int = 10_000
+    # Fetch genesis (block 0) from a peer instead of building it locally — for a
+    # node joining an existing network without the genesis set in its config.
+    bootstrap_genesis: bool = False
 
     @field_validator("peers", mode="before")
     @classmethod
@@ -105,6 +128,20 @@ class ConsensusSettings(BaseSettings):
 
 class StorageSettings(BaseSettings):
     url: str = "sqlite:///data/helix_chain.db"
+
+
+class OtelSettings(BaseSettings):
+    """Distributed tracing (OpenTelemetry). No-op unless enabled."""
+
+    enabled: bool = False
+    endpoint: str = ""  # OTLP/HTTP endpoint, e.g. http://otel-collector:4318/v1/traces
+    service_name: str = "helix-node"
+
+
+class NotifySettings(BaseSettings):
+    """Tamper-alert delivery. Console is always on; webhook is optional."""
+
+    webhook_url: str = ""  # Slack incoming webhook or generic SIEM endpoint
 
 
 class Settings(BaseSettings):
@@ -120,12 +157,23 @@ class Settings(BaseSettings):
     consensus: ConsensusSettings = Field(default_factory=ConsensusSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     tls: TlsSettings = Field(default_factory=TlsSettings)
+    otel: OtelSettings = Field(default_factory=OtelSettings)
+    notify: NotifySettings = Field(default_factory=NotifySettings)
     log_level: str = "INFO"
     # Enables the /admin/submit test hook. Demo/testing only.
     debug_api: bool = False
-    # Shared bearer token authenticating peer-to-peer endpoints (/consensus,
-    # /mempool, /block). When empty, authentication is disabled (dev only).
+    # Shared bearer token(s) authenticating peer-to-peer endpoints. Comma-separate
+    # to accept several during rotation (the first is used for outbound requests).
+    # When empty, authentication is disabled (dev only).
     cluster_token: str = ""
+    # Read the token(s) from this file instead (secret mount).
+    cluster_token_file: str = ""
+
+    def resolved_private_key_hex(self) -> str:
+        return _read_secret(self.node.private_key_hex, self.node.private_key_file)
+
+    def resolved_cluster_token(self) -> str:
+        return _read_secret(self.cluster_token, self.cluster_token_file)
 
 
 def load_settings() -> Settings:

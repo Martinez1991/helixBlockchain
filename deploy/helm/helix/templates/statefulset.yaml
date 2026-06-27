@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "helix.fullname" . }}
+  labels: {{- include "helix.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "helix.fullname" . }}
+  replicas: {{ .Values.replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {{- include "helix.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "helix.selectorLabels" . | nindent 8 }}
+    spec:
+      affinity:
+        podAntiAffinity:
+          {{- if eq .Values.podAntiAffinity "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {{- include "helix.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+          {{- else }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: {{- include "helix.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+          {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: helix
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Select this pod's private key by its StatefulSet ordinal.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ORD="${HOSTNAME##*-}"
+              export HELIX_NODE__NODE_ID="helix-${ORD}"
+              export HELIX_NODE__PRIVATE_KEY_FILE="/secrets/keys/${ORD}"
+              export HELIX_CONSENSUS__ADVERTISE="${HOSTNAME}.{{ include "helix.fullname" . }}:8000"
+              exec helix-node
+          ports:
+            - { name: http, containerPort: 8000 }
+          env:
+            - { name: HELIX_CONSENSUS__BIND_PORT, value: "8000" }
+            - { name: HELIX_CONSENSUS__PEERS, value: {{ join "," .Values.peers | quote }} }
+            - { name: HELIX_ORION__HOST, value: {{ .Values.orion.host | quote }} }
+            - { name: HELIX_ORION__PORT, value: {{ .Values.orion.port | quote }} }
+            - { name: HELIX_ORION__DATABASE, value: {{ .Values.orion.database | quote }} }
+            - { name: HELIX_ORION__USE_CHANGE_STREAMS, value: {{ .Values.orion.useChangeStreams | quote }} }
+            - { name: HELIX_STORAGE__URL, value: {{ .Values.storage.url | quote }} }
+            - { name: HELIX_CLUSTER_TOKEN_FILE, value: "/secrets/cluster_token" }
+            - { name: HELIX_LOG_LEVEL, value: {{ .Values.logLevel | quote }} }
+            - { name: HELIX_DEBUG_API, value: {{ .Values.debugApi | quote }} }
+            - { name: HELIX_CONSENSUS__RATE_LIMIT_RPS, value: "200" }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: secrets, mountPath: /secrets, readOnly: true }
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.secret.name }}
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.storage.storageClassName }}
+        storageClassName: {{ .Values.storage.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}

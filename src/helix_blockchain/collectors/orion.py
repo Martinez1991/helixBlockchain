@@ -83,6 +83,27 @@ class MongoOrionGateway:
                 )
         return observations
 
+    def ensure_indexes(self) -> None:
+        """Create helpful indexes on the watched collections (idempotent).
+
+        ``entities._id.id`` and ``csubs.reference`` back the lookups done every
+        cycle; without them large brokers force collection scans."""
+        entities = self._entities_collection(self.main_broker())
+        csubs = self._csubs_collection(self.main_broker())
+        entities.create_index("_id.id", name="helix_entity_id")
+        csubs.create_index("reference", name="helix_csub_reference")
+
+    def watch_entities(self, broker: str | None = None):
+        """Yield change events for the entities collection via a Mongo Change
+        Stream (requires a replica set). Each event signals which entity changed,
+        so the checker can re-verify just that entity instead of full-scanning.
+
+        Returns the pymongo change-stream cursor (an iterator of change docs)."""
+        host = broker or self.main_broker()
+        return self._entities_collection(host).watch(
+            full_document="updateLookup"
+        )
+
     def close(self) -> None:
         for client in self._clients.values():
             client.close()
@@ -94,6 +115,22 @@ class MongoOrionGateway:
         raw_id = doc.get("_id")
         if isinstance(raw_id, dict):
             return raw_id.get("id")
+        return None
+
+    @staticmethod
+    def entity_id_from_change(change: dict) -> str | None:
+        """Extract the changed entity id from a Mongo change-stream document.
+
+        Orion entity ids live under ``documentKey._id.id`` (or, for full-document
+        events, ``fullDocument._id.id``)."""
+        key = change.get("documentKey") or {}
+        raw = key.get("_id")
+        if isinstance(raw, dict) and raw.get("id"):
+            return raw["id"]
+        full = change.get("fullDocument") or {}
+        raw = full.get("_id")
+        if isinstance(raw, dict):
+            return raw.get("id")
         return None
 
     @staticmethod

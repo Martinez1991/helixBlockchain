@@ -135,6 +135,12 @@ class OtelSettings(BaseSettings):
     service_name: str = "helix-node"
 
 
+class NotifySettings(BaseSettings):
+    """Tamper-alert delivery. Console is always on; webhook is optional."""
+
+    webhook_url: str = ""  # Slack incoming webhook or generic SIEM endpoint
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="HELIX_",
@@ -149,6 +155,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     tls: TlsSettings = Field(default_factory=TlsSettings)
     otel: OtelSettings = Field(default_factory=OtelSettings)
+    notify: NotifySettings = Field(default_factory=NotifySettings)
     log_level: str = "INFO"
     # Enables the /admin/submit test hook. Demo/testing only.
     debug_api: bool = False

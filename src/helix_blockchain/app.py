@@ -27,7 +27,11 @@ from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.network.node import Node
 from helix_blockchain.network.server import create_app
 from helix_blockchain.network.transport import HttpTransport
-from helix_blockchain.notify.notifier import ConsoleNotifier
+from helix_blockchain.notify.notifier import (
+    CompositeNotifier,
+    ConsoleNotifier,
+    WebhookNotifier,
+)
 from helix_blockchain.storage.sql import SqlBlockRepository
 from helix_blockchain.tls import uvicorn_ssl_kwargs
 
@@ -55,7 +59,7 @@ def _advertise_peer(settings: Settings, private_key: PrivateKey) -> Peer | None:
     )
 
 
-def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
+def build_node(settings: Settings) -> tuple[Node, HttpTransport, WebhookNotifier | None]:
     private_key_hex = settings.resolved_private_key_hex()
     if not private_key_hex:
         raise SystemExit(
@@ -80,7 +84,12 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         cluster_token=cluster_token,
         tls=settings.tls,
     )
-    notifier = ConsoleNotifier()
+    notifiers: list = [ConsoleNotifier()]
+    webhook = None
+    if settings.notify.webhook_url:
+        webhook = WebhookNotifier(settings.notify.webhook_url)
+        notifiers.append(webhook)
+    notifier = CompositeNotifier(notifiers)
     node = Node(
         node_id=settings.node.node_id,
         private_key=private_key,
@@ -97,7 +106,7 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         "node %s ready: %d validators, quorum %d, tip height %d",
         settings.node.node_id, validators.size, validators.quorum, node.height,
     )
-    return node, transport
+    return node, transport, webhook
 
 
 async def monitor_loop(node: Node, settings: Settings) -> None:
@@ -163,7 +172,7 @@ async def _change_stream_loop(gateway: MongoOrionGateway, run_check) -> None:
 
 
 async def run(settings: Settings) -> None:
-    node, transport = build_node(settings)
+    node, transport, webhook = build_node(settings)
     api = create_app(
         node, debug_api=settings.debug_api,
         cluster_token=settings.resolved_cluster_token(),
@@ -181,14 +190,17 @@ async def run(settings: Settings) -> None:
     server = uvicorn.Server(config)
     # Round-change fires if a height stalls for ~3x the block interval.
     round_timeout = max(2.0, settings.consensus.block_interval * 3)
+    tasks = [
+        server.serve(),
+        node.inbound_worker(),
+        monitor_loop(node, settings),
+        node.round_timer_loop(round_timeout),
+        node.discovery_loop(max(5.0, settings.consensus.block_interval * 2)),
+    ]
+    if webhook is not None:
+        tasks.append(webhook.run())
     try:
-        await asyncio.gather(
-            server.serve(),
-            node.inbound_worker(),
-            monitor_loop(node, settings),
-            node.round_timer_loop(round_timeout),
-            node.discovery_loop(max(5.0, settings.consensus.block_interval * 2)),
-        )
+        await asyncio.gather(*tasks)
     finally:
         await transport.aclose()
 

@@ -1,5 +1,10 @@
 """Tamper notifications."""
 
-from helix_blockchain.notify.notifier import ConsoleNotifier, Notifier
+from helix_blockchain.notify.notifier import (
+    CompositeNotifier,
+    ConsoleNotifier,
+    Notifier,
+    WebhookNotifier,
+)
 
-__all__ = ["Notifier", "ConsoleNotifier"]
+__all__ = ["Notifier", "ConsoleNotifier", "CompositeNotifier", "WebhookNotifier"]

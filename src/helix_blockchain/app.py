@@ -23,6 +23,7 @@ from helix_blockchain.config import Peer, Settings, load_settings
 from helix_blockchain.consensus.journal import SqlConsensusJournalStore
 from helix_blockchain.consensus.validator_set import ValidatorSet
 from helix_blockchain.domain.crypto import PrivateKey
+from helix_blockchain.network.bootstrap import fetch_genesis
 from helix_blockchain.network.discovery import PeerRegistry
 from helix_blockchain.network.node import Node
 from helix_blockchain.network.server import create_app
@@ -59,7 +60,9 @@ def _advertise_peer(settings: Settings, private_key: PrivateKey) -> Peer | None:
     )
 
 
-def build_node(settings: Settings) -> tuple[Node, HttpTransport, WebhookNotifier | None]:
+async def build_node(
+    settings: Settings,
+) -> tuple[Node, HttpTransport, WebhookNotifier | None]:
     private_key_hex = settings.resolved_private_key_hex()
     if not private_key_hex:
         raise SystemExit(
@@ -87,6 +90,12 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport, WebhookNotifier
         cluster_token=cluster_token,
         tls=settings.tls,
     )
+    # A joining node may bootstrap genesis from a peer instead of building it.
+    if repo.height() < 0 and settings.consensus.bootstrap_genesis:
+        genesis = await fetch_genesis(transport)
+        if genesis is not None:
+            repo.append(genesis)
+            log.info("bootstrapped genesis (block 0) from a peer")
     notifiers: list = [ConsoleNotifier()]
     webhook = None
     if settings.notify.webhook_url:
@@ -175,7 +184,7 @@ async def _change_stream_loop(gateway: MongoOrionGateway, run_check) -> None:
 
 
 async def run(settings: Settings) -> None:
-    node, transport, webhook = build_node(settings)
+    node, transport, webhook = await build_node(settings)
     api = create_app(
         node, debug_api=settings.debug_api,
         cluster_token=settings.resolved_cluster_token(),

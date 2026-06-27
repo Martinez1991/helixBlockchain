@@ -114,6 +114,9 @@ class ConsensusSettings(BaseSettings):
     rate_limit_burst: int = 200
     max_body_bytes: int = 1_048_576
     max_inbox: int = 10_000
+    # Fetch genesis (block 0) from a peer instead of building it locally — for a
+    # node joining an existing network without the genesis set in its config.
+    bootstrap_genesis: bool = False
 
     @field_validator("peers", mode="before")
     @classmethod

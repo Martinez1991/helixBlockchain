@@ -74,8 +74,10 @@ def test_rotation_rejects_unknown_token():
     assert r.status_code == 401
 
 
-def test_build_node_tolerates_self_in_peers(monkeypatch):
+def test_build_node_tolerates_self_in_peers():
     # k8s gives every pod the same full peer list (including itself).
+    import asyncio
+
     from helix_blockchain import app
     from helix_blockchain.config import Peer
 
@@ -87,5 +89,5 @@ def test_build_node_tolerates_self_in_peers(monkeypatch):
     )
     settings.consensus.peers = [Peer("self", "h", 8000, k.public),
                                 Peer("other", "h2", 8000, other)]
-    node, _transport, _wh = app.build_node(settings)
+    node, _transport, _wh = asyncio.run(app.build_node(settings))
     assert node.validators.size == 2  # self deduped against the peer entry

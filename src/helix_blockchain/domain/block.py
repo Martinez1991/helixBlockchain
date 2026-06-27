@@ -16,7 +16,7 @@ from typing import Any
 from helix_blockchain.domain.canonical import canonical_bytes
 from helix_blockchain.domain.crypto import PublicKey, sha256_hex
 from helix_blockchain.domain.membership import ChangeAction, ValidatorChange
-from helix_blockchain.domain.merkle import merkle_root
+from helix_blockchain.domain.merkle import ProofStep, merkle_proof, merkle_root
 from helix_blockchain.domain.records import IntegrityRecord
 
 # Hash of the genesis block's predecessor.
@@ -113,6 +113,14 @@ class Block:
     def has_consistent_merkle_root(self) -> bool:
         """True iff the header's Merkle root matches the records it carries."""
         return self.header.merkle_root == self.computed_merkle_root()
+
+    def proof_for_record(self, index: int) -> list[ProofStep]:
+        """Merkle inclusion proof for ``records[index]`` against the block root.
+
+        Records are the first leaves (validator changes follow), so the record
+        index is also its leaf index."""
+        leaves = self._leaves(self.records, self.validator_changes)
+        return merkle_proof(leaves, index)
 
     def add_commit_signature(self, validator: PublicKey, signature: bytes) -> None:
         """Attach a verified commit signature from ``validator``."""

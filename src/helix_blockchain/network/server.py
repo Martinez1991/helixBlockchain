@@ -147,6 +147,28 @@ def create_app(
             raise HTTPException(status_code=404, detail="block not found")
         return block.to_dict()
 
+    @app.get("/proof/{height}/{index}")
+    async def inclusion_proof(height: int, index: int) -> dict[str, Any]:
+        """Merkle inclusion proof that ``records[index]`` is in finalized block
+        ``height`` — verifiable offline against the block's Merkle root."""
+        block = node.repo.get(height)
+        if block is None:
+            raise HTTPException(status_code=404, detail="block not found")
+        if not 0 <= index < len(block.records):
+            raise HTTPException(status_code=404, detail="record index out of range")
+        steps = block.proof_for_record(index)
+        return {
+            "height": height,
+            "index": index,
+            "merkle_root": block.header.merkle_root,
+            "block_hash": block.hash,
+            "record": block.records[index].to_dict(),
+            "proof": [
+                {"sibling": s.sibling.hex(), "right": s.sibling_on_right}
+                for s in steps
+            ],
+        }
+
     @app.get("/chain")
     async def chain() -> dict[str, Any]:
         latest = node.repo.latest()

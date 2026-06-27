@@ -32,7 +32,7 @@ jobs:
       # (removed from the tree and rotated in #6). Rewriting history is out of
       # scope; .gitleaks.toml allowlists them and the scan still surfaces any
       # NEW secret in the logs. Flip to blocking once history is rewritten.
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         continue-on-error: true
         env:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

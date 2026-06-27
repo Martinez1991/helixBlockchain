@@ -15,6 +15,7 @@ import logging
 
 import uvicorn
 
+from helix_blockchain import tracing
 from helix_blockchain.clock import now_ms
 from helix_blockchain.collectors.integrity import IntegrityChecker, RecordDeduper
 from helix_blockchain.collectors.orion import MongoOrionGateway
@@ -195,6 +196,11 @@ async def run(settings: Settings) -> None:
 def main() -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
+    tracing.configure(
+        enabled=settings.otel.enabled,
+        endpoint=settings.otel.endpoint,
+        service_name=settings.otel.service_name,
+    )
     asyncio.run(run(settings))
 
 

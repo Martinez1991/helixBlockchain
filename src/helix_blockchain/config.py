@@ -127,6 +127,14 @@ class StorageSettings(BaseSettings):
     url: str = "sqlite:///data/helix_chain.db"
 
 
+class OtelSettings(BaseSettings):
+    """Distributed tracing (OpenTelemetry). No-op unless enabled."""
+
+    enabled: bool = False
+    endpoint: str = ""  # OTLP/HTTP endpoint, e.g. http://otel-collector:4318/v1/traces
+    service_name: str = "helix-node"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="HELIX_",
@@ -140,6 +148,7 @@ class Settings(BaseSettings):
     consensus: ConsensusSettings = Field(default_factory=ConsensusSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     tls: TlsSettings = Field(default_factory=TlsSettings)
+    otel: OtelSettings = Field(default_factory=OtelSettings)
     log_level: str = "INFO"
     # Enables the /admin/submit test hook. Demo/testing only.
     debug_api: bool = False

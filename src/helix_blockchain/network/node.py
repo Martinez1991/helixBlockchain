@@ -20,7 +20,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 
-from helix_blockchain import metrics
+from helix_blockchain import metrics, tracing
 from helix_blockchain.consensus.engine import (
     ConsensusEngine,
     StepResult,
@@ -246,13 +246,17 @@ class Node:
 
     async def on_message(self, message: ConsensusMessage) -> None:
         """Handle an inbound consensus message from a peer."""
-        async with self._lock:
-            working_height = self.repo.height() + 1
-            if message.height > working_height:
-                await self._sync_locked(up_to=message.height - 1)
-            if self._engine is None or message.height != self._engine.height:
-                return  # follower, or stale/future after sync; ignore
-            await self._apply_locked(self._engine.handle(message))
+        with tracing.tracer().start_as_current_span("consensus.handle") as span:
+            span.set_attribute("helix.msg_type", message.type.value)
+            span.set_attribute("helix.height", message.height)
+            span.set_attribute("helix.round", message.round)
+            async with self._lock:
+                working_height = self.repo.height() + 1
+                if message.height > working_height:
+                    await self._sync_locked(up_to=message.height - 1)
+                if self._engine is None or message.height != self._engine.height:
+                    return  # follower, or stale/future after sync; ignore
+                await self._apply_locked(self._engine.handle(message))
 
     async def discovery_loop(self, interval_s: float) -> None:
         """Announce ourselves and pull peers' registries to learn new addresses."""
@@ -341,6 +345,13 @@ class Node:
                      self.node_id, self._active.size, self._active.quorum, block.index)
         self._engine = self._new_engine()
         tampered = sum(1 for r in block.records if r.verdict is Verdict.TAMPERED)
+        span = tracing.trace.get_current_span()
+        span.add_event("block.committed", {
+            "helix.height": block.index,
+            "helix.hash": block.hash,
+            "helix.records": len(block.records),
+            "helix.tampered": tampered,
+        })
         metrics.observe_commit(tampered)
         metrics.observe_chain_state(
             height=self.height, validators=self._active.size,

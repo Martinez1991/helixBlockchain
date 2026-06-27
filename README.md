@@ -36,11 +36,15 @@ Se um agente malicioso inserir ou alterar dados diretamente nos brokers
 - **Detecção de adulteração** entre broker principal e federados (FIWARE Orion).
 - **Crash-recovery seguro** — WAL de votos (anti-equivocação).
 - **Registros assinados** — anti-injeção no mempool.
+- **Confidencialidade alvo** — `value_hash` como **commitment com chave (HMAC)**
+  (bloqueia força-bruta de valores) + **pseudonimização** de `entity_id` (LGPD).
 - **Membership dinâmico on-chain** + **descoberta de peers** + **bootstrap de genesis**.
 - **Segurança** — token de cluster (rotação), **TLS/mTLS**, segredos via arquivo,
   rate limiting/backpressure, trilha de auditoria.
 - **Observabilidade** — métricas Prometheus, dashboard Grafana, alertas, tracing
   OpenTelemetry; **notificações** webhook/Slack/SIEM.
+- **Console web** (`/ui`) — board do cluster, explorer de blocos, feed de
+  adulterações, evolução do conjunto de validadores e verificador de Merkle.
 - **Operação** — Docker (non-root), **Helm** com HA, Postgres/SQLite, backup.
 
 ## Como funciona

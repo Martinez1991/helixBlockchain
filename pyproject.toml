@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "helix-blockchain"
-version = "0.3.0"
+version = "0.4.0"
 description = "Permissioned BFT blockchain for tamper-evident integrity of FIWARE Orion (Helix Sandbox NG) IoT data"
 readme = "README.md"
 requires-python = ">=3.11"

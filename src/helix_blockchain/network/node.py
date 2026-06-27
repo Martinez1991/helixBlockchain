@@ -138,8 +138,9 @@ class Node:
 
     # ── public API ─────────────────────────────────────────────────────
     async def submit_records(self, records: list[IntegrityRecord]) -> None:
-        """Add locally observed records, gossip them to peers, and maybe propose."""
-        await self._ingest_records(records, gossip=True)
+        """Sign locally observed records, gossip them to peers, and maybe propose."""
+        signed = [r.signed(self.private_key) for r in records]
+        await self._ingest_records(signed, gossip=True)
 
     async def receive_records(self, records: list[IntegrityRecord]) -> None:
         """Add records gossiped by a peer (no re-gossip in a full-mesh network)."""
@@ -183,10 +184,19 @@ class Node:
         self, records: list[IntegrityRecord], *, gossip: bool
     ) -> None:
         async with self._lock:
-            fresh = [r for r in records if r.id not in self._mempool_seen]
+            # Anti-injection: only records validly signed by a current validator
+            # are accepted; unsigned/forged records are dropped.
+            authentic = []
+            for r in records:
+                if r.verify(self._active):
+                    authentic.append(r)
+                else:
+                    log.warning("node=%s dropping unsigned/invalid record for %s",
+                                self.node_id, r.entity_id)
+            fresh = [r for r in authentic if r.content_key not in self._mempool_seen]
             if not fresh:
                 return
-            self._mempool_seen.update(r.id for r in fresh)
+            self._mempool_seen.update(r.content_key for r in fresh)
             self._pending.extend(fresh)
             if gossip:
                 await self.transport.gossip_records([r.to_dict() for r in fresh])
@@ -321,9 +331,9 @@ class Node:
     def _forget_committed(self, block: Block) -> None:
         """Drop a committed block's records and changes from local buffers (incl.
         ones we never held), so they are never re-proposed or re-gossiped."""
-        committed_ids = {r.id for r in block.records}
-        self._pending = [r for r in self._pending if r.id not in committed_ids]
-        self._mempool_seen.update(committed_ids)
+        committed = {r.content_key for r in block.records}
+        self._pending = [r for r in self._pending if r.content_key not in committed]
+        self._mempool_seen.update(committed)
         if block.validator_changes:
             applied = set(block.validator_changes)
             self._pending_changes = [

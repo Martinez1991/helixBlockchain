@@ -26,7 +26,8 @@ from __future__ import annotations
 import hmac
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from helix_blockchain import metrics
 from helix_blockchain.config import Peer
@@ -35,12 +36,34 @@ from helix_blockchain.domain.block import Block
 from helix_blockchain.domain.membership import ValidatorChange
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
+from helix_blockchain.network.ratelimit import RateLimiter
+
+# Mutating endpoints subject to rate limiting and body-size limits.
+_PROTECTED_PREFIXES = ("/consensus", "/mempool", "/membership", "/block", "/peers", "/admin")
 
 
 def create_app(
-    node: Node, *, debug_api: bool = False, cluster_token: str = ""
+    node: Node,
+    *,
+    debug_api: bool = False,
+    cluster_token: str = "",
+    rate_limit_rps: float = 0.0,
+    rate_limit_burst: int = 200,
+    max_body_bytes: int = 1_048_576,
 ) -> FastAPI:
     app = FastAPI(title="Helix Blockchain Node", version="0.2.0")
+    limiter = RateLimiter(rate_limit_rps, rate_limit_burst)
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        if request.method == "POST" and request.url.path.startswith(_PROTECTED_PREFIXES):
+            length = request.headers.get("content-length")
+            if length is not None and int(length) > max_body_bytes:
+                return JSONResponse({"detail": "payload too large"}, status_code=413)
+            client = request.client.host if request.client else "unknown"
+            if not limiter.allow(client):
+                return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
+        return await call_next(request)
 
     accepted = [t.strip() for t in cluster_token.split(",") if t.strip()]
 
@@ -65,7 +88,8 @@ def create_app(
             ) from exc
         # Queue and return immediately so the sender's broadcast never blocks on
         # our processing (avoids re-entrant consensus deadlock).
-        node.enqueue_inbound(message)
+        if not node.enqueue_inbound(message):
+            raise HTTPException(status_code=503, detail="inbox full, retry later")
         return {"status": "accepted"}
 
     @app.post("/mempool", dependencies=auth)

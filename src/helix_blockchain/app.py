@@ -90,6 +90,7 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
         on_commit=notifier.block_committed,
         peer_registry=registry,
         journal_store=journal_store,
+        max_inbox=settings.consensus.max_inbox,
     )
     log.info(
         "node %s ready: %d validators, quorum %d, tip height %d",
@@ -165,6 +166,9 @@ async def run(settings: Settings) -> None:
     api = create_app(
         node, debug_api=settings.debug_api,
         cluster_token=settings.resolved_cluster_token(),
+        rate_limit_rps=settings.consensus.rate_limit_rps,
+        rate_limit_burst=settings.consensus.rate_limit_burst,
+        max_body_bytes=settings.consensus.max_body_bytes,
     )
     config = uvicorn.Config(
         api,

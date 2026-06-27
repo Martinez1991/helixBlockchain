@@ -61,6 +61,7 @@ class Node:
         on_commit: CommitHook | None = None,
         peer_registry: PeerRegistry | None = None,
         journal_store: ConsensusJournalStore | None = None,
+        max_inbox: int = 10_000,
     ) -> None:
         self.node_id = node_id
         self.private_key = private_key
@@ -84,7 +85,7 @@ class Node:
         # so the HTTP handler returns immediately. This is what prevents a
         # re-entrant deadlock: a node broadcasting under its lock would otherwise
         # block on a peer that synchronously broadcasts back to it.
-        self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue()
+        self._inbox: asyncio.Queue[ConsensusMessage] = asyncio.Queue(maxsize=max_inbox)
 
         if self.repo.height() < 0:
             # Genesis embeds the initial validator set, making the chain
@@ -220,10 +221,17 @@ class Node:
             if self._engine is not None:
                 await self._apply_locked(self._engine.on_timeout())
 
-    def enqueue_inbound(self, message: ConsensusMessage) -> None:
-        """Queue a peer message for the worker (called from the HTTP handler)."""
-        self._inbox.put_nowait(message)
+    def enqueue_inbound(self, message: ConsensusMessage) -> bool:
+        """Queue a peer message for the worker. Returns ``False`` (backpressure)
+        if the inbox is full, so the caller can shed load."""
+        try:
+            self._inbox.put_nowait(message)
+        except asyncio.QueueFull:
+            log.warning("node=%s inbox full; dropping inbound message", self.node_id)
+            metrics.observe_inbound(self._inbox.qsize())
+            return False
         metrics.observe_inbound(self._inbox.qsize())
+        return True
 
     async def inbound_worker(self) -> None:
         """Process queued inbound messages serially, off the HTTP request path."""

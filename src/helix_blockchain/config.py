@@ -108,6 +108,12 @@ class ConsensusSettings(BaseSettings):
     # This node's address as peers should reach it (e.g. "node-1:8000"). Used to
     # announce itself for peer discovery; empty disables self-announcement.
     advertise: str = ""
+    # Per-source rate limit for P2P/admin endpoints (requests/sec; 0 = disabled)
+    # and burst size. Plus request body cap and inbound queue bound (backpressure).
+    rate_limit_rps: float = 0.0
+    rate_limit_burst: int = 200
+    max_body_bytes: int = 1_048_576
+    max_inbox: int = 10_000
 
     @field_validator("peers", mode="before")
     @classmethod

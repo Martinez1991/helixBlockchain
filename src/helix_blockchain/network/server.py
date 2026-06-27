@@ -24,6 +24,7 @@ inject bogus tampering reports.
 from __future__ import annotations
 
 import hmac
+import logging
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
@@ -37,6 +38,8 @@ from helix_blockchain.domain.membership import ValidatorChange
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
 from helix_blockchain.network.ratelimit import RateLimiter
+
+audit_log = logging.getLogger("helix.audit")
 
 # Mutating endpoints subject to rate limiting and body-size limits.
 _PROTECTED_PREFIXES = ("/consensus", "/mempool", "/membership", "/block", "/peers", "/admin")
@@ -56,14 +59,23 @@ def create_app(
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
+        client = request.client.host if request.client else "unknown"
         if request.method == "POST" and request.url.path.startswith(_PROTECTED_PREFIXES):
             length = request.headers.get("content-length")
             if length is not None and int(length) > max_body_bytes:
                 return JSONResponse({"detail": "payload too large"}, status_code=413)
-            client = request.client.host if request.client else "unknown"
             if not limiter.allow(client):
                 return JSONResponse({"detail": "rate limit exceeded"}, status_code=429)
-        return await call_next(request)
+        response = await call_next(request)
+        # Access audit trail (ISO 27001 A.12.4 / LGPD accountability): who did
+        # what, when, with what outcome. Ship this logger to your SIEM.
+        if request.url.path.startswith(_PROTECTED_PREFIXES):
+            audit_log.info(
+                "access method=%s path=%s client=%s authenticated=%s status=%s",
+                request.method, request.url.path, client,
+                bool(request.headers.get("authorization")), response.status_code,
+            )
+        return response
 
     accepted = [t.strip() for t in cluster_token.split(",") if t.strip()]
 

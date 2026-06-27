@@ -12,8 +12,13 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install .
 
+# Run as a non-root user (defense in depth; matches the Helm securityContext).
+RUN useradd --uid 1000 --create-home helix \
+    && mkdir -p /app/data \
+    && chown -R helix:helix /app
+USER helix
+
 # Persisted chain data (SQLite by default).
-RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
 EXPOSE 8000

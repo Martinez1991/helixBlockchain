@@ -32,6 +32,7 @@ secret:
   create: false          # set true only for quick tests with inline values
   name: helix-secrets
   clusterToken: ""
+  commitKey: ""          # shared HMAC key (hex) for value commitments / pseudonyms
   privateKeys: {}        # { "0": "<hex>", "1": "<hex>", ... }
 
 tls:

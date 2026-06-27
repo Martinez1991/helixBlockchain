@@ -82,8 +82,13 @@ Métricas Prometheus em `GET /metrics` (sempre ativo, sem config).
 |---|---|---|
 | `HELIX_CLUSTER_TOKEN` | — | Token(s) Bearer dos endpoints P2P; vírgula = rotação; vazio = sem auth |
 | `HELIX_CLUSTER_TOKEN_FILE` | — | Lê o token de um arquivo (preferido) |
+| `HELIX_COMMIT_KEY_HEX` | — | Chave (hex) p/ commitment com HMAC do `value_hash`; mesma em todos os nós; vazio = SHA-256 puro |
+| `HELIX_COMMIT_KEY_FILE` | — | Lê a chave de commit de um arquivo (preferido) |
+| `HELIX_PSEUDONYMIZE_ENTITIES` | `false` | Pseudonimiza `entity_id` on-chain (LGPD); requer chave de commit |
 | `HELIX_DEBUG_API` | `false` | Habilita `/admin/*` (demo/testes) |
 | `HELIX_LOG_LEVEL` | `INFO` | Nível de log |
+
+Ver [security.md](security.md#confidencialidade) para o modelo de confidencialidade.
 
 ## Notas
 

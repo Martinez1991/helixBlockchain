@@ -27,6 +27,39 @@ página consolida os controles. Reporte de vulnerabilidades: [../SECURITY.md](ht
   basta para injetar relatos falsos.
 - A cadeia armazena `value_hash` (não o valor bruto) → minimização de dados.
 
+## Confidencialidade
+
+O sistema garante **integridade**, não confidencialidade — mas há controles
+**alvo** para o que a cadeia armazena (o valor bruto nunca é gravado):
+
+- **Commitment com chave (HMAC) do `value_hash`.** Sem chave, o fingerprint é
+  `SHA-256(valor)`, que é **força-bruteável** para valores de baixa entropia
+  (booleano, faixa estreita). Com `HELIX_COMMIT_KEY_HEX`/`_FILE` (mesma chave em
+  todos os validadores), vira `HMAC-SHA256(chave, valor)` — um leitor sem a chave
+  não consegue invertê-lo, mas validadores (que têm a chave) ainda computam o
+  mesmo valor, preservando a detecção de adulteração e o acordo entre nós.
+- **Pseudonimização de `entity_id`** (`HELIX_PSEUDONYMIZE_ENTITIES=true`):
+  `pid:HMAC(chave, entity_id)`, reversível só por quem tem a chave — habilita
+  *crypto-shredding* (LGPD). Trade-off: alertas mostram um id opaco.
+
+> **Escopo:** confidencialidade contra **leitores externos** (DB vazado, nós
+> não-validadores, backups, auditores) — **não** contra o quórum de validadores
+> (eles têm a chave). Esconder dos validadores quebraria a comparação
+> entre brokers, que é o propósito do sistema. Para isso seria necessário ZKP/
+> commitments homomórficos (fora de escopo).
+
+## Em trânsito e em repouso (at-rest / in-transit)
+
+- **Em trânsito:** TLS/mTLS no P2P (`HELIX_TLS__*`) e TLS no MongoDB
+  (`HELIX_ORION__TLS`, `__TLS_CA_FILE`).
+- **Em repouso (cadeia/WAL):** é responsabilidade da infraestrutura de storage —
+  use **cifra de volume/disco** (LUKS, EBS/PD encryption) ou **DB gerenciado com
+  TDE** (RDS/Cloud SQL Postgres). Para SQLite, **SQLCipher**
+  (`sqlite+pysqlcipher://`) é uma opção (requer lib nativa).
+- **Orion/Mongo em repouso:** *encrypted storage engine* do MongoDB Enterprise ou
+  cifra de volume; é dado de origem, fora deste módulo.
+- **Segredos em repouso:** sempre via arquivo/KMS/Vault (`*_FILE`), nunca no git.
+
 ## Segurança do consenso
 
 - **Finalidade** por quórum de *commit seals* (assinaturas sobre o hash do

@@ -168,12 +168,22 @@ class Settings(BaseSettings):
     cluster_token: str = ""
     # Read the token(s) from this file instead (secret mount).
     cluster_token_file: str = ""
+    # Shared key (hex) turning stored value fingerprints into keyed commitments
+    # (HMAC) and enabling entity pseudonymization. Same on every validator.
+    commit_key_hex: str = ""
+    commit_key_file: str = ""
+    # Pseudonymize entity_id on-chain (LGPD). Trade-off: alerts show an opaque id.
+    pseudonymize_entities: bool = False
 
     def resolved_private_key_hex(self) -> str:
         return _read_secret(self.node.private_key_hex, self.node.private_key_file)
 
     def resolved_cluster_token(self) -> str:
         return _read_secret(self.cluster_token, self.cluster_token_file)
+
+    def resolved_commit_key(self) -> bytes | None:
+        hexkey = _read_secret(self.commit_key_hex, self.commit_key_file)
+        return bytes.fromhex(hexkey) if hexkey else None
 
 
 def load_settings() -> Settings:

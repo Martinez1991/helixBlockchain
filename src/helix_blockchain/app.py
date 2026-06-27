@@ -22,6 +22,7 @@ from helix_blockchain.collectors.orion import MongoOrionGateway
 from helix_blockchain.config import Peer, Settings, load_settings
 from helix_blockchain.consensus.journal import SqlConsensusJournalStore
 from helix_blockchain.consensus.validator_set import ValidatorSet
+from helix_blockchain.domain.confidentiality import Confidentiality
 from helix_blockchain.domain.crypto import PrivateKey
 from helix_blockchain.network.bootstrap import fetch_genesis
 from helix_blockchain.network.discovery import PeerRegistry
@@ -43,6 +44,13 @@ def configure_logging(level: str) -> None:
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    )
+
+
+def _confidentiality(settings: Settings) -> Confidentiality:
+    return Confidentiality(
+        settings.resolved_commit_key(),
+        pseudonymize_entities=settings.pseudonymize_entities,
     )
 
 
@@ -127,7 +135,9 @@ async def monitor_loop(node: Node, settings: Settings) -> None:
     Uses Mongo Change Streams (event-driven, low latency, no idle scans) when
     ``use_change_streams`` is set, otherwise timed polling."""
     gateway = MongoOrionGateway(settings.orion)
-    checker = IntegrityChecker(gateway, now_ms=now_ms)
+    checker = IntegrityChecker(
+        gateway, now_ms=now_ms, confidentiality=_confidentiality(settings)
+    )
     deduper = RecordDeduper()
     try:
         await asyncio.to_thread(gateway.ensure_indexes)
@@ -191,6 +201,7 @@ async def run(settings: Settings) -> None:
         rate_limit_rps=settings.consensus.rate_limit_rps,
         rate_limit_burst=settings.consensus.rate_limit_burst,
         max_body_bytes=settings.consensus.max_body_bytes,
+        confidentiality=_confidentiality(settings),
     )
     config = uvicorn.Config(
         api,

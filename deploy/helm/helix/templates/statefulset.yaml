@@ -56,6 +56,7 @@ spec:
             - { name: HELIX_ORION__USE_CHANGE_STREAMS, value: {{ .Values.orion.useChangeStreams | quote }} }
             - { name: HELIX_STORAGE__URL, value: {{ .Values.storage.url | quote }} }
             - { name: HELIX_CLUSTER_TOKEN_FILE, value: "/secrets/cluster_token" }
+            - { name: HELIX_COMMIT_KEY_FILE, value: "/secrets/commit_key" }
             - { name: HELIX_LOG_LEVEL, value: {{ .Values.logLevel | quote }} }
             - { name: HELIX_DEBUG_API, value: {{ .Values.debugApi | quote }} }
             - { name: HELIX_CONSENSUS__RATE_LIMIT_RPS, value: "200" }

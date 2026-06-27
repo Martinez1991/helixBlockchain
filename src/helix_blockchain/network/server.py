@@ -36,6 +36,7 @@ from helix_blockchain import metrics
 from helix_blockchain.config import Peer
 from helix_blockchain.consensus.messages import ConsensusMessage
 from helix_blockchain.domain.block import Block
+from helix_blockchain.domain.confidentiality import Confidentiality
 from helix_blockchain.domain.membership import ValidatorChange
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 from helix_blockchain.network.node import Node
@@ -55,7 +56,9 @@ def create_app(
     rate_limit_rps: float = 0.0,
     rate_limit_burst: int = 200,
     max_body_bytes: int = 1_048_576,
+    confidentiality: Confidentiality | None = None,
 ) -> FastAPI:
+    conf = confidentiality or Confidentiality()
     app = FastAPI(title="Helix Blockchain Node", version="0.3.0")
     limiter = RateLimiter(rate_limit_rps, rate_limit_burst)
 
@@ -240,9 +243,9 @@ def create_app(
             prefix = "Tampered" if v is Verdict.TAMPERED else "Demo"
             records = [
                 IntegrityRecord(
-                    entity_id=f"{prefix}:{ts}:{i}",
+                    entity_id=conf.entity_ref(f"{prefix}:{ts}:{i}"),
                     attribute="temperature",
-                    value_hash=IntegrityRecord.hash_value(20 + i),
+                    value_hash=conf.commit_value(20 + i),
                     source_broker="federated-broker" if v is Verdict.TAMPERED else "demo",
                     verdict=v,
                     observed_at=ts,

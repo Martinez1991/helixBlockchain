@@ -18,6 +18,7 @@ x-node: &node-defaults
     HELIX_STORAGE__URL: sqlite:////app/data/chain.db
     HELIX_DEBUG_API: "true"             # demo only: enables /admin/submit
     HELIX_CLUSTER_TOKEN: ${CLUSTER_TOKEN}
+    HELIX_COMMIT_KEY_HEX: ${COMMIT_KEY}   # keyed value commitments (same on all nodes)
   healthcheck:
     test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
     interval: 10s

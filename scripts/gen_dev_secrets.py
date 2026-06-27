@@ -34,8 +34,9 @@ def main() -> int:
         lines.append(f"NODE{i}_KEY={key.to_hex()}")
         lines.append(f"NODE{i}_PUB={key.public.to_hex()}")
     lines.append(f"CLUSTER_TOKEN={secrets.token_urlsafe(32)}")
+    lines.append(f"COMMIT_KEY={secrets.token_hex(32)}")  # shared keyed-commitment key
     ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {ENV_PATH} with 3 dev keypairs + a random cluster token")
+    print(f"wrote {ENV_PATH} with 3 dev keypairs + cluster token + commit key")
     return 0
 
 

@@ -23,7 +23,10 @@ de dados (princípio da **minimização**, art. 6º III).
 | IP de origem | log de auditoria | **Sim** | Endereço de rede do cliente P2P/admin |
 
 > Se `entity_id` puder identificar um titular, trate-o como **dado pessoal** e
-> avalie pseudonimização (ex.: HMAC do id com chave gerenciada) antes do registro.
+> ative a **pseudonimização** (`HELIX_PSEUDONYMIZE_ENTITIES=true` +
+> `HELIX_COMMIT_KEY_*`): grava `pid:HMAC(chave, entity_id)`. O `value_hash`
+> também passa a ser um **commitment com chave** (HMAC), evitando força-bruta de
+> valores de baixa entropia. Ver [../security.md](../security.md#confidencialidade).
 
 ## Bases legais (exemplos a confirmar)
 
@@ -38,9 +41,9 @@ de dados (princípio da **minimização**, art. 6º III).
   específico conflita com a imutabilidade. Mitigações:
   - não registrar dado pessoal diretamente (somente `value_hash` + id
     pseudonimizado);
-  - para o direito de eliminação, manter a **chave de pseudonimização** separada
-    e, ao atender a solicitação, **destruir a chave** (tornando o id irreversível
-    — *crypto-shredding*).
+  - para o direito de eliminação, manter a **chave de pseudonimização/commit**
+    (`HELIX_COMMIT_KEY_*`) separada e, ao atender a solicitação, **destruir a
+    chave** (tornando id e `value_hash` irreversíveis — *crypto-shredding*).
 - Solicitações de acesso/correção referentes ao **dado de origem** devem ser
   atendidas no FIWARE Orion (sistema de origem), não na cadeia de integridade.
 

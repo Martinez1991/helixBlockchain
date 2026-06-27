@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from helix_blockchain.domain.confidentiality import Confidentiality
 from helix_blockchain.domain.records import IntegrityRecord, Verdict
 
 
@@ -50,11 +51,21 @@ class OrionGateway(Protocol):
 
 
 class IntegrityChecker:
-    """Compares federated brokers against the main broker to flag tampering."""
+    """Compares federated brokers against the main broker to flag tampering.
 
-    def __init__(self, gateway: OrionGateway, now_ms: Callable[[], int]) -> None:
+    Tamper detection runs on the *raw* values (which this node sees in both
+    brokers); confidentiality only changes what is *stored* on the chain — the
+    keyed value commitment and the (optional) entity pseudonym."""
+
+    def __init__(
+        self,
+        gateway: OrionGateway,
+        now_ms: Callable[[], int],
+        confidentiality: Confidentiality | None = None,
+    ) -> None:
         self._gateway = gateway
         self._now_ms = now_ms
+        self._conf = confidentiality or Confidentiality()
 
     def check(self) -> list[IntegrityRecord]:
         main_index = {
@@ -72,9 +83,9 @@ class IntegrityChecker:
                     verdict = Verdict.OK
                 records.append(
                     IntegrityRecord(
-                        entity_id=obs.entity_id,
+                        entity_id=self._conf.entity_ref(obs.entity_id),
                         attribute=obs.attribute,
-                        value_hash=IntegrityRecord.hash_value(obs.value),
+                        value_hash=self._conf.commit_value(obs.value),
                         source_broker=broker,
                         verdict=verdict,
                         observed_at=observed_at,

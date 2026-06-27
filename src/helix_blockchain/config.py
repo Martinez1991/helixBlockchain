@@ -72,6 +72,9 @@ class OrionSettings(BaseSettings):
     tls: bool = False
     tls_ca_file: str = ""  # CA bundle verifying the MongoDB server certificate
     poll_interval: float = 5.0
+    # Event-driven collection via Mongo Change Streams (requires a replica set).
+    # When false, falls back to timed polling every poll_interval seconds.
+    use_change_streams: bool = False
 
 
 class TlsSettings(BaseSettings):

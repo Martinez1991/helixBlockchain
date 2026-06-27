@@ -99,22 +99,65 @@ def build_node(settings: Settings) -> tuple[Node, HttpTransport]:
 
 
 async def monitor_loop(node: Node, settings: Settings) -> None:
-    """Poll Orion, detect tampering and feed records into consensus."""
+    """Detect tampering and feed records into consensus.
+
+    Uses Mongo Change Streams (event-driven, low latency, no idle scans) when
+    ``use_change_streams`` is set, otherwise timed polling."""
     gateway = MongoOrionGateway(settings.orion)
     checker = IntegrityChecker(gateway, now_ms=now_ms)
     deduper = RecordDeduper()
-    interval = settings.orion.poll_interval
+    try:
+        await asyncio.to_thread(gateway.ensure_indexes)
+    except Exception:  # noqa: BLE001 — indexing is best-effort
+        log.exception("could not ensure Orion indexes")
+
+    async def run_check() -> None:
+        records = await asyncio.to_thread(checker.check)
+        fresh = deduper.filter_new(records)
+        if fresh:
+            log.info("submitting %d new integrity record(s)", len(fresh))
+            await node.submit_records(fresh)
+        await node.tick()
+
+    if settings.orion.use_change_streams:
+        await _change_stream_loop(gateway, run_check)
+    else:
+        await _polling_loop(run_check, settings.orion.poll_interval)
+
+
+async def _polling_loop(run_check, interval: float) -> None:
     while True:
         try:
-            records = await asyncio.to_thread(checker.check)
-            fresh = deduper.filter_new(records)
-            if fresh:
-                log.info("submitting %d new integrity record(s)", len(fresh))
-                await node.submit_records(fresh)
-            await node.tick()
+            await run_check()
         except Exception:  # noqa: BLE001 — keep the loop alive on transient errors
-            log.exception("monitor loop iteration failed")
+            log.exception("monitor poll failed")
         await asyncio.sleep(interval)
+
+
+async def _change_stream_loop(gateway: MongoOrionGateway, run_check) -> None:
+    """Re-verify integrity whenever the entities collection changes."""
+    queue: asyncio.Queue[bool] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def watch() -> None:  # runs in a worker thread (blocking cursor)
+        try:
+            for _change in gateway.watch_entities():
+                loop.call_soon_threadsafe(queue.put_nowait, True)
+        except Exception:  # noqa: BLE001
+            log.exception("change stream ended; falling back to a final check")
+            loop.call_soon_threadsafe(queue.put_nowait, True)
+
+    watcher = asyncio.create_task(asyncio.to_thread(watch))
+    await run_check()  # initial baseline
+    try:
+        while True:
+            await queue.get()
+            try:
+                await run_check()
+            except Exception:  # noqa: BLE001
+                log.exception("monitor change check failed")
+    finally:
+        watcher.cancel()
 
 
 async def run(settings: Settings) -> None:

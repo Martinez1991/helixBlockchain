@@ -9,11 +9,19 @@ servidor.
 ```bash
 git clone https://github.com/Martinez1991/helixBlockchain.git
 cd helixBlockchain
+python scripts/gen_dev_secrets.py     # gera .env (gitignored) com chaves+token de DEV
 docker compose up --build
 ```
 
-Isso sobe MongoDB, FIWARE Orion e 3 validadores. As chaves no `docker-compose.yml`
-são **apenas de desenvolvimento** — gere novas para qualquer uso real.
+Isso sobe MongoDB, FIWARE Orion e 3 validadores. **Nenhum segredo é versionado**:
+o compose lê chaves/token do `.env` gerado pelo script (apenas para
+desenvolvimento). Para Kubernetes/HA, use o chart em
+[`deploy/helm/helix`](../deploy/helm/helix/README.md).
+
+### Opção C — Ingressar numa rede existente
+
+Um nó novo pode **buscar o genesis de um peer** em vez de tê-lo na config:
+defina `HELIX_CONSENSUS__BOOTSTRAP_GENESIS=true` e ao menos um peer.
 
 ### Opção B — Instalação manual (por nó)
 
@@ -46,26 +54,32 @@ Edite e preencha:
 
 ```dotenv
 HELIX_NODE__NODE_ID=node-1
-HELIX_NODE__PRIVATE_KEY_HEX=<chave privada deste nó>
+# Em produção, prefira um arquivo de segredo (Vault/KMS/k8s):
+HELIX_NODE__PRIVATE_KEY_FILE=/run/secrets/helix_private_key
+# (ou inline, só para dev): HELIX_NODE__PRIVATE_KEY_HEX=<chave>
 
 # Broker Orion a monitorar (MongoDB)
 HELIX_ORION__HOST=<ip-do-orion>
-HELIX_ORION__PORT=27017
-HELIX_ORION__USERNAME=helix
 HELIX_ORION__PASSWORD=<senha-do-mongo>
 HELIX_ORION__DATABASE=orion
 
 # Demais validadores (peer specs gerados no passo 1, separados por vírgula)
 HELIX_CONSENSUS__PEERS=node-2@10.0.0.2:8000|<pub2>,node-3@10.0.0.3:8000|<pub3>
+HELIX_CONSENSUS__ADVERTISE=node-1:8000
 HELIX_CONSENSUS__BIND_PORT=8000
+
+# Token de cluster (mesmo em todos; prefira arquivo em produção)
+HELIX_CLUSTER_TOKEN_FILE=/run/secrets/helix_cluster_token
 
 # Persistência (SQLite para começar; Postgres em produção)
 HELIX_STORAGE__URL=sqlite:///data/helix_chain.db
 ```
 
-> **Segurança:** ao contrário da v1, **nenhuma credencial fica no código**.
-> Nunca faça commit do `.env`. Em produção, habilite TLS
-> (`HELIX_ORION__TLS=true`) e exponha o P2P via HTTPS.
+> **Segurança:** nenhuma credencial fica no código. Nunca faça commit do `.env`.
+> Em produção, use **segredos via arquivo** (`*_FILE`), habilite **TLS/mTLS**
+> (`HELIX_TLS__*`, `HELIX_ORION__TLS`) e considere rate limiting
+> (`HELIX_CONSENSUS__RATE_LIMIT_RPS`). Referência completa em
+> [configuration.md](configuration.md) e [security.md](security.md).
 
 #### 3. Execute
 
